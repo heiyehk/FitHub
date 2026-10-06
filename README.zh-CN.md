@@ -43,7 +43,7 @@
 | 分享 | 已实现 —— 系统分享面板，带仓库、本机适配结论和 Release 链接。是文字，不是图片卡片 |
 | 偏好设置 | 已实现 —— 外观（跟随系统/浅色/深色）、是否包含预发布版本、安装前是否强制校验 SHA-256 |
 
-尚未发布任何 release 二进制包，请从源码构建。
+每个 release 都会附上 APK。取 [`FitHub-v0.0.1-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.1) —— 已签名、R8 压缩、含全部四种 ABI。想看 logcat 就用 `-debug` 那个。
 
 ## 功能
 
@@ -120,11 +120,20 @@ keyPassword=<同一个口令>
 相同。`keystore.properties` 和 `*.jks` 已在 `.gitignore` 中，不要提交。密钥请另做备份 ——
 丢了就意味着此后无法给已发布的应用发更新。
 
+从 `v0.0.1` 起，这个已发布的证书就固定下来了。日后换密钥必须与它一致，否则 Android 会拒绝覆盖安装：
+
+```
+SHA-256: A4:49:FD:1B:31:E8:94:F8:2E:E5:F6:C6:22:6E:B7:4E:6F:0C:EF:9C:4C:1E:B6:7F:83:D3:40:0B:CE:B9:92:B4
+```
+
+`keytool -list -v -keystore app/fithub-release.jks -alias fithub` 在 `SHA256:` 一行打印同样的值，
+就说明手上的密钥是对的。
+
 ### GitHub client ID
 
-登录界面已经接线，缺的是 client ID 本身：`app/build.gradle.kts` 会把 `GITHUB_CLIENT_ID` 烘进
-`BuildConfig`，而该字段为空时 `LoginScreen` 会直说「没配」，而不是等到第一次请求才失败。
-这个值在配置期读取，按下面的顺序取第一个「已设置且非空」的来源：
+登录界面已经接线；**全新克隆**缺的是 client ID 本身（release 页面上的 APK 已经带上了，构建期烘进去的）。
+`app/build.gradle.kts` 会把 `GITHUB_CLIENT_ID` 烘进 `BuildConfig`，而该字段为空时 `LoginScreen` 会直说「没配」，
+而不是等到第一次请求才失败。这个值在配置期读取，按下面的顺序取第一个「已设置且非空」的来源：
 
 | 来源 | 谁在用 |
 |---|---|

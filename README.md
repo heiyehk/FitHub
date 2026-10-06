@@ -43,7 +43,7 @@ Early and incomplete. Version `0.0.1`, and the following is accurate as of that 
 | Share | Working — system share sheet with the repo, its fit verdict for this device, and the Release URL. Text, not an image card |
 | Preferences | Working — appearance (follow system / light / dark), include prereleases, require a SHA-256 checksum before install |
 
-No release binaries are published yet. Build from source.
+APKs ship with every release. Take [`FitHub-v0.0.1-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.1) — signed, R8-minified, and carrying all four ABIs. The `-debug` variant is there when you want logcat.
 
 ## What it does
 
@@ -123,12 +123,23 @@ Two things that bite: `storeFile` is resolved **relative to the repository root*
 do not commit them. Back the keystore up somewhere safe: losing it means you can never ship an update
 to an app already published under it.
 
+Since `v0.0.1` that published certificate is fixed, and a future keystore has to match it or Android
+refuses to install over the top:
+
+```
+SHA-256: A4:49:FD:1B:31:E8:94:F8:2E:E5:F6:C6:22:6E:B7:4E:6F:0C:EF:9C:4C:1E:B6:7F:83:D3:40:0B:CE:B9:92:B4
+```
+
+`keytool -list -v -keystore app/fithub-release.jks -alias fithub` prints the same line under `SHA256:`
+when the keystore in hand is the right one.
+
 ### GitHub client ID
 
-The sign-in screen is wired up; what is missing is a client ID. `app/build.gradle.kts` bakes a
-`GITHUB_CLIENT_ID` `BuildConfig` field, and `LoginScreen` says so in as many words when that field
-is blank rather than failing at the first request. The value is read at configuration time from
-the first source that is set and non-blank:
+The sign-in screen is wired up; what a **fresh clone** is missing is a client ID. The APKs on the
+release page carry one, baked in at build time, so sign-in works there — it is a clone that has to
+supply its own. `app/build.gradle.kts` bakes a `GITHUB_CLIENT_ID` `BuildConfig` field, and
+`LoginScreen` says so in as many words when that field is blank rather than failing at the first
+request. The value is read at configuration time from the first source that is set and non-blank:
 
 | Source | Used by |
 |---|---|
