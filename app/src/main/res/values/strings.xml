@@ -303,6 +303,7 @@
     <string name="info_update_not_found">Could not check: %1$s</string>
     <string name="info_update_local_newer">Your build %1$s is newer than the latest release %2$s</string>
     <string name="info_update_local_newer_para">You have %1$s installed and the latest release is only %2$s — this build is ahead of the release.</string>
+    <string name="info_update_go">View and install</string>
     <string name="login_title">Sign in with GitHub</string>
     <string name="login_nocfg_h">This build cannot sign in</string>
     <string name="login_nocfg_desc">It has no GitHub OAuth App client_id compiled in.</string>

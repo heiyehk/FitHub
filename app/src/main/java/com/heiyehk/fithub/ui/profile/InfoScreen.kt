@@ -42,12 +42,14 @@ import androidx.compose.ui.unit.dp
 import com.heiyehk.fithub.BuildConfig
 import com.heiyehk.fithub.R
 import com.heiyehk.fithub.data.AppLocale
+import com.heiyehk.fithub.ui.components.GhostButton
 import com.heiyehk.fithub.data.Async
 import com.heiyehk.fithub.data.FitRepository
 import com.heiyehk.fithub.data.Mirrors
 import com.heiyehk.fithub.data.Prefs
 import com.heiyehk.fithub.data.remote.VersionTag
 import com.heiyehk.fithub.ui.icons.FiArrowLeft
+import com.heiyehk.fithub.ui.icons.FiArrowRight
 import com.heiyehk.fithub.ui.icons.FiCheck
 import com.heiyehk.fithub.ui.icons.FiRefresh
 import com.heiyehk.fithub.ui.theme.FitTheme
@@ -390,9 +392,19 @@ fun MirrorScreen(onBack: () -> Unit) {
  * 唯一的更新来源就是仓库 Release。
  *
  * 会消耗一次未认证配额（60 次/小时里的一次），所以只在用户点下按钮时才请求。
+ *
+ * [onOpenRepo] 是查到新版之后的下一步：**把用户送进本仓库的详情页**，
+ * 而不是在这一页里另写一套下载安装。那条路上已经有产物列表、这台设备的适配判定、
+ * SHA-256 校验、前台服务下载和系统安装器，而且是每一个别的仓库都在走的那条 ——
+ * 为自己单独写一份，等于多出一条没人验证过的安装链路。
  */
 @Composable
-fun UpdateScreen(onBack: () -> Unit, repo: FitRepository, onToast: (String, String?) -> Unit) {
+fun UpdateScreen(
+    onBack: () -> Unit,
+    repo: FitRepository,
+    onToast: (String, String?) -> Unit,
+    onOpenRepo: (String) -> Unit,
+) {
     var checking by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<Async<String>?>(null) }
     val scope = rememberCoroutineScope()
@@ -498,6 +510,19 @@ fun UpdateScreen(onBack: () -> Unit, repo: FitRepository, onToast: (String, Stri
                             stringResource(R.string.info_update_compare, r.value, BuildConfig.VERSION_NAME),
                         )
                         InfoPara(stringResource(R.string.info_update_source_only))
+                        Spacer(Modifier.height(14.dp))
+                        /*
+                         * 只在这一档给按钮。
+                         *
+                         * 「已是最新」给了没处可去，「本机更新」给了是骗人 ——
+                         * 那两个版本号说明用户装的就是更新的构建，让他去装个更旧的
+                         * 没有任何道理。空状态给下一步动作，但不等于每一档都给。
+                         */
+                        GhostButton(
+                            stringResource(R.string.info_update_go),
+                            onClick = { onOpenRepo(repo.selfRepo) },
+                            icon = FiArrowRight,
+                        )
                     }
                 }
             }

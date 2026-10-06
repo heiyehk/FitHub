@@ -2,7 +2,7 @@
 
 中文 · [English](产品概述.md)
 
-Version 0.0.3 · 2026-10-06
+Version 0.0.4 · 2026-10-06
 
 This document describes product positioning and feature scope. Each module is marked with its current implementation state — the README has a more detailed status breakdown.
 

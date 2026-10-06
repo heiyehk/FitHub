@@ -23,7 +23,7 @@ It does two things a generic browser tab cannot:
 
 ## Status
 
-Early and incomplete. Version `0.0.3`, and the following is accurate as of that release:
+Early and incomplete. Version `0.0.4`, and the following is accurate as of that release:
 
 | Area | State |
 |---|---|
@@ -42,11 +42,11 @@ Early and incomplete. Version `0.0.3`, and the following is accurate as of that 
 | History | Working — local only, never synced. Browsing history and download/install records share one list; a record is written when the file actually lands, not when the button is tapped |
 | Download and install | Working — foreground service with a progress notification, SHA-256 computed on download, handed to the system installer |
 | Sign-in | Working — GitHub Device Flow, verified end to end on a device. `read:user` only, token in the Android Keystore |
-| Update check | Working — compares version numbers properly (not string equality), and says so when the local build is ahead of the latest release |
+| Update check | Working — compares version numbers properly (not string equality), says so when the local build is ahead of the latest release, and offers a button that opens this repo's own detail page to download and install it |
 | Share | Working — system share sheet with the repo, its fit verdict for this device, and the Release URL. Text, not an image card |
 | Preferences | Working — appearance (follow system / light / dark), include prereleases, require a SHA-256 checksum before install |
 
-APKs ship with every release. Take [`FitHub-v0.0.3-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.3) — signed, R8-minified, and carrying all four ABIs. The `-debug` variant is there when you want logcat.
+APKs ship with every release. Take [`FitHub-v0.0.4-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.4) — signed, R8-minified, and carrying all four ABIs. The `-debug` variant is there when you want logcat.
 
 ## What it does
 

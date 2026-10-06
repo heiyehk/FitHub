@@ -39,8 +39,15 @@ sealed interface Async<out T> {
  */
 class FitRepository(val api: GitHubApi) {
 
-    /** FitHub 自己的仓库全名。改仓库地址时这里和 manifest 的 homepage 都要一起改 */
-    private val selfRepo = "heiyehk/FitHub"
+    /**
+     * FitHub 自己的仓库全名。改仓库地址时这里和 manifest 的 homepage、
+     * `LinkEngine.BUILT_IN_LINKS` 三处要一起改。
+     *
+     * 不再是 private：「检查更新」查到新版之后要能把用户送进这个仓库的详情页，
+     * 那条路上已经有产物列表、适配判定、SHA-256、下载与安装 —— 复用它，
+     * 而不是在这个页面上再写一遍下载安装。
+     */
+    val selfRepo = "heiyehk/FitHub"
 
     /** 发现页的公共查询串：只展示有真实 release 的仓库 */
     private val baseQuery = "has:release topic:android archived:false"

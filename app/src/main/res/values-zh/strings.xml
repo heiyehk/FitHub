@@ -300,6 +300,7 @@
     <string name="info_update_not_found">没查到：%1$s</string>
     <string name="info_update_local_newer">本机 %1$s 比线上最新的 %2$s 还新</string>
     <string name="info_update_local_newer_para">你装的是 %1$s，仓库上最新的只有 %2$s —— 本机版本比线上更新。</string>
+    <string name="info_update_go">查看并安装</string>
     <string name="login_title">用 GitHub 登录</string>
     <string name="login_nocfg_h">这个包不能登录</string>
     <string name="login_nocfg_desc">它没有编进 GitHub OAuth App 的 client_id。</string>

@@ -1649,6 +1649,25 @@ fun FitHubApp() {
                     onBack = { closePage() },
                     repo = repo,
                     onToast = { msg, note -> toast(msg, note) },
+                    // 关掉本页再开详情：详情面板渲染在所有页面之上，
+                    // 留着这一页的话它会盖在详情上面，而且返回时还得先退两层。
+                    onOpenRepo = { full ->
+                        closePage()
+                        /*
+                         * 拿已经解析好的那份当占位。
+                         *
+                         * 内置绑定保证 linkBindings 里躺着 FitHub 自己那份完整详情
+                         * —— resolveLinks 每次扫描都会按全名 `repo.detail()` 拉一遍，
+                         * 而且会算好本机适配状态。于是面板当场就能出，不必空着等
+                         * 补拉那一趟网络（byId 返回 null 时就是这个症状：
+                         * 「点一下卡住，过一会儿详情才出来」）。
+                         *
+                         * 找不到就走原来的路：先空着，等补拉回来。装了这个包的机器
+                         * 上那份数据必然在，但不为它写死一条会崩的假设。
+                         */
+                        val known = linkBindings.values.firstOrNull { it.id == full }
+                        open(full, placeholder = known)
+                    },
                 )
             }
 
