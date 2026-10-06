@@ -418,23 +418,34 @@ fun GhostButton(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     height: Dp = 44.dp,
+    /**
+     * 禁用态。
+     *
+     * 「正在做」和「不能做」要用同一种视觉：正在下载的按钮按下去没反应，
+     * 跟卡住了没区别。所以 disabled 就做成淡出，而不是换个文案。
+     */
+    enabled: Boolean = true,
 ) {
     val p = FitTheme.palette
+    val dimmed = p.ink.copy(alpha = 0.38f)
     Row(
         modifier
             .height(height)
             .clip(CircleShape)
-            .border(BorderStroke(1.dp, p.hairline), CircleShape)
-            .tap { onClick() }
+            .border(
+                BorderStroke(1.dp, if (enabled) p.hairline else p.hairline.copy(alpha = 0.5f)),
+                CircleShape,
+            )
+            .tap(enabled = enabled) { onClick() }
             .padding(horizontal = 18.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {
-            Icon(icon, null, tint = p.ink2, modifier = Modifier.size(16.dp))
+            Icon(icon, null, tint = if (enabled) p.ink2 else dimmed, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(7.dp))
         }
-        Text(text, style = FitTypography.labelLarge, color = p.ink, maxLines = 1)
+        Text(text, style = FitTypography.labelLarge, color = if (enabled) p.ink else dimmed, maxLines = 1)
     }
 }
 

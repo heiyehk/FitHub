@@ -69,7 +69,8 @@ import com.heiyehk.fithub.ui.theme.MonoMeta
 
 /**
  * 我的：账号状态与设置。
- * 登录尚未接入 OAuth，这一页现在只展示未登录状态与配额说明。
+ *
+ * 登录已接入 GitHub Device Flow 并在真机跑通（见 [LoginScreen]）。
  */
 @Composable
 fun ProfileScreen(

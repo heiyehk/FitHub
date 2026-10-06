@@ -23,9 +23,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import com.heiyehk.fithub.data.install.ApkInstaller
 import com.heiyehk.fithub.data.install.DownloadCenter
 import com.heiyehk.fithub.data.install.assetNameOrNull
 import kotlinx.coroutines.flow.map
@@ -49,7 +52,7 @@ import com.heiyehk.fithub.data.Mirrors
 import com.heiyehk.fithub.data.Prefs
 import com.heiyehk.fithub.data.remote.VersionTag
 import com.heiyehk.fithub.ui.icons.FiArrowLeft
-import com.heiyehk.fithub.ui.icons.FiArrowRight
+import com.heiyehk.fithub.ui.icons.FiDownload
 import com.heiyehk.fithub.ui.icons.FiCheck
 import com.heiyehk.fithub.ui.icons.FiRefresh
 import com.heiyehk.fithub.ui.theme.FitTheme
@@ -393,25 +396,71 @@ fun MirrorScreen(onBack: () -> Unit) {
  *
  * 会消耗一次未认证配额（60 次/小时里的一次），所以只在用户点下按钮时才请求。
  *
- * [onOpenRepo] 是查到新版之后的下一步：**把用户送进本仓库的详情页**，
- * 而不是在这一页里另写一套下载安装。那条路上已经有产物列表、这台设备的适配判定、
- * SHA-256 校验、前台服务下载和系统安装器，而且是每一个别的仓库都在走的那条 ——
- * 为自己单独写一份，等于多出一条没人验证过的安装链路。
+ * ## 有新版时干什么
+ *
+ * 按下按钮**直接下载并安装**，不去仓库详情页、不让用户自己挑产物。
+ * 下载走 [DownloadCenter]（前台服务 + 通知栏进度 + SHA-256），装走 [ApkInstaller]
+ * —— 和装任何一个别的仓库是同两条路，所以下载进度、校验、覆盖安装的判断
+ * 都不必再写一遍。
+ *
+ * 这里曾经改成「跳进自己的仓库详情页」，那对用户等于「点更新 → 自己去找到那个包
+ * → 再点一次下载」，多两步；更糟的是详情页里那个包能不能直接装，还取决于文件名
+ * 有没有带 ABI（见 GitHubMapper 的 toAsset）。这条不再绕路。
  */
 @Composable
 fun UpdateScreen(
     onBack: () -> Unit,
     repo: FitRepository,
     onToast: (String, String?) -> Unit,
-    onOpenRepo: (String) -> Unit,
 ) {
     var checking by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<Async<String>?>(null) }
+
+    /** 已经点下「下载并安装」的那个包名。只认自己的那一次进度，别人的下载不管。 */
+    var installing by remember { mutableStateOf<String?>(null) }
+    var installError by remember { mutableStateOf<String?>(null) }
+    var installed by remember { mutableStateOf(false) }
+
     val scope = rememberCoroutineScope()
     val p = FitTheme.palette
     // 点击回调不是 @Composable，stringResource 在里面调不动，
     // 轮询结果里的那两条 toast 因此走 context.getString
     val context = LocalContext.current
+    val download by DownloadCenter.state.collectAsState()
+
+    // 认领自己的那一次下载。下完了就交给系统安装器 —— 走的是详情面板里
+    // 同一个 ApkInstaller，所以覆盖安装、签名冲突那些判断行为完全一致。
+    LaunchedEffect(download, installing) {
+        val mine = installing ?: return@LaunchedEffect
+        when (val st = download) {
+            is DownloadCenter.Progress.Ready -> if (st.assetName == mine) {
+                installing = null
+                ApkInstaller.install(context, st.file) { ok, message ->
+                    scope.launch {
+                        if (ok) {
+                            installed = true
+                        } else {
+                            installError = if (message == ApkInstaller.NEEDS_PERMISSION) {
+                                context.getString(R.string.install_error_no_permission)
+                            } else {
+                                context.getString(R.string.install_error_failed, message)
+                            }
+                            // 系统安装器已经接管，把通知栏那条撤掉 ——
+                            // 否则会同时留着「下载完成」和「安装失败」两条
+                            DownloadCenter.reset()
+                        }
+                    }
+                }
+            }
+
+            is DownloadCenter.Progress.Failed -> if (st.assetName == mine) {
+                installing = null
+                installError = st.reason
+            }
+
+            else -> Unit
+        }
+    }
 
     InfoScreen(stringResource(R.string.info_update_title), onBack) {
         InfoHeading(stringResource(R.string.info_update_h_current))
@@ -518,11 +567,65 @@ fun UpdateScreen(
                          * 那两个版本号说明用户装的就是更新的构建，让他去装个更旧的
                          * 没有任何道理。空状态给下一步动作，但不等于每一档都给。
                          */
+                        val busy = installing != null
                         GhostButton(
-                            stringResource(R.string.info_update_go),
-                            onClick = { onOpenRepo(repo.selfRepo) },
-                            icon = FiArrowRight,
+                            text = when {
+                                busy -> stringResource(R.string.info_update_downloading)
+                                else -> stringResource(R.string.info_update_go)
+                            },
+                            onClick = {
+                                scope.launch {
+                                    // 先要文件再起下载：用户按的是「装最新版」，
+                                    // 不是「随便下一个」，所以宁可多花一次请求把包选对，
+                                    // 也不能下到一个装不上的。
+                                    when (val a = repo.latestInstallableOfSelf()) {
+                                        is Async.Ok -> {
+                                            val asset = a.value
+                                            if (asset?.downloadUrl.isNullOrBlank()) {
+                                                installError = context.getString(
+                                                    R.string.info_update_no_asset,
+                                                )
+                                                return@launch
+                                            }
+                                            installError = null
+                                            installed = false
+                                            installing = asset!!.name
+                                            DownloadCenter.enqueue(
+                                                context,
+                                                asset.downloadUrl,
+                                                asset,
+                                                repo.selfRepo,
+                                            )
+                                        }
+
+                                        is Async.Err -> installError = a.message
+                                        Async.Loading -> Unit
+                                    }
+                                }
+                            },
+                            enabled = !busy,
+                            icon = if (busy) null else FiDownload,
                         )
+                        // 进度。下载走的是前台服务，通知栏里也有，这里给的是
+                        // 留在这一页时的反馈 —— 数字来自同一个 StateFlow，不是另一份。
+                        val frac = (download as? DownloadCenter.Progress.Running)
+                            ?.let { if (it.total > 0) it.bytes.toFloat() / it.total else 0f }
+                        if (busy && frac != null) {
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                "${(frac * 100).toInt()}%",
+                                style = FitTypography.titleSmall,
+                                color = p.ink2,
+                            )
+                        }
+                        if (installError != null) {
+                            Spacer(Modifier.height(10.dp))
+                            InfoPara(stringResource(R.string.info_update_install_failed, installError!!))
+                        }
+                        if (installed) {
+                            Spacer(Modifier.height(10.dp))
+                            InfoPara(stringResource(R.string.info_update_installed))
+                        }
                     }
                 }
             }

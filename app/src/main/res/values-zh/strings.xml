@@ -96,6 +96,11 @@
     <string name="detail_tab_assets">适配产物</string>
     <string name="detail_tab_changelog">更新日志</string>
     <string name="detail_tab_readme">README</string>
+    <string name="detail_tab_code">代码</string>
+    <string name="code_empty_dir">这个目录是空的。</string>`r`n    <string name="code_loading_file">正在拉取文件…</string>
+    <string name="code_open_in_github">在 GitHub 上打开</string>
+    <string name="code_too_large">这个文件有 %1，太大了，不在手机上显示。</string>
+    <string name="code_not_text">这个文件不是文本（%1），看不出来。</string>
     <string name="detail_action_back">返回</string>
     <string name="detail_action_follow">关注更新</string>
     <string name="detail_action_unfollow">取消关注</string>
@@ -300,7 +305,11 @@
     <string name="info_update_not_found">没查到：%1$s</string>
     <string name="info_update_local_newer">本机 %1$s 比线上最新的 %2$s 还新</string>
     <string name="info_update_local_newer_para">你装的是 %1$s，仓库上最新的只有 %2$s —— 本机版本比线上更新。</string>
-    <string name="info_update_go">查看并安装</string>
+    <string name="info_update_go">下载并安装</string>
+    <string name="info_update_downloading">正在下载…</string>
+    <string name="info_update_no_asset">这个 release 里没有能装到本机的安装包。</string>
+    <string name="info_update_install_failed">安装没成功：%1$s</string>
+    <string name="info_update_installed">已安装。请到系统安装器里确认。</string>
     <string name="login_title">用 GitHub 登录</string>
     <string name="login_nocfg_h">这个包不能登录</string>
     <string name="login_nocfg_desc">它没有编进 GitHub OAuth App 的 client_id。</string>

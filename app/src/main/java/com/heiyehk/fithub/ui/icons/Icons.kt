@@ -111,6 +111,24 @@ val FiClock: ImageVector by lazy {
     fitIcon("Clock", circle(12f, 12f, 8.2f) + " M12,7.6 L12,12 L15,13.8")
 }
 
+/** 代码浏览里的目录行 */
+val FiFolder: ImageVector by lazy {
+    fitIcon(
+        "Folder",
+        "M3.6,6.4 C3.6,5.6 4.3,5 5.1,5 L9.2,5 L10.8,7 L18.9,7 " +
+            "C19.7,7 20.4,7.6 20.4,8.4 L20.4,17.6 C20.4,18.4 19.7,19 18.9,19 " +
+            "L5.1,19 C4.3,19 3.6,18.4 3.6,17.6 Z",
+    )
+}
+
+/** 代码浏览里的文件行 */
+val FiFile: ImageVector by lazy {
+    fitIcon(
+        "File",
+        "M6.4,3.6 L14.2,3.6 L18,7.4 L18,20.4 L6.4,20.4 Z M14.2,3.6 L14.2,7.4 L18,7.4",
+    )
+}
+
 val FiShield: ImageVector by lazy {
     fitIcon(
         "Shield",

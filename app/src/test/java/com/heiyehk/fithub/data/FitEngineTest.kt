@@ -107,13 +107,75 @@ class FitEngineTest {
         assertEquals(FitState.Mismatch, asset("App-1.0.0-arm64-v8a.apk").fit)
     }
 
+    /**
+     * 文件名里没有 ABI，但确实是 APK —— 判「可降级」而不是「未知」。
+     *
+     * 这条断言以前写的是 `FitState.Unknown`，理由是「不猜」。现在反过来：
+     * 判 Unknown 会让 `pickBest` 挑不出它、`best` 成了 null、主 CTA 退化成
+     * 「打开原始安装包链接」—— **一个装得上的包被当成装不上的**，而且是对
+     * 所有没写 ABI 的仓库都失效（FitHub 自己的 release 就是这种）。
+     *
+     * 关键区别仍然要留着：**不能标 `inferred`**。文件名确实没给出架构，
+     * 文案必须说「看不出 ABI」而不是「确认是 universal」，
+     * 而且下载后仍然要靠 PackageManager 读真实清单来定论。
+     */
     @Test
-    fun `文件名里没有 ABI 时判为未知而不是猜`() {
+    fun `文件名里没有 ABI 的 APK 判为可降级并说明看不出架构`() {
         Env.device = device("arm64-v8a")
         val a = asset("App-1.0.0.apk")
-        assertEquals(FitState.Unknown, a.fit)
-        assertFalse("没推断出来就不能标 inferred", a.inferred)
-        assertEquals("要说明下一步怎么做", R.string.reason_abi_unknown, a.reason!!.res)
+        assertEquals(FitState.Degrade, a.fit)
+        assertFalse("文件名没给出 ABI，就不能标 inferred", a.inferred)
+        assertEquals("要说明看不出 ABI", R.string.reason_abi_unknown, a.reason!!.res)
+    }
+
+    /**
+     * 和真·universal 包的文案必须分开。
+     *
+     * `App-1.0.0-universal.apk` 是作者**明说**一个包打天下，说「多占体积」成立；
+     * `App-1.0.0.apk` 只是没写，说「多占体积」是在编。
+     */
+    @Test
+    fun `没写 ABI 与写了 universal 用不同的文案`() {
+        Env.device = device("arm64-v8a")
+        assertEquals(R.string.reason_universal_only, asset("App-1.0.0-universal.apk").reason!!.res)
+        assertEquals(R.string.reason_abi_unknown, asset("App-1.0.0.apk").reason!!.res)
+    }
+
+    /** 同级候选里优先 release：debug 包常带 debug 签名 / applicationId 后缀，装了会冲突 */
+    @Test
+    fun `没有架构信息时优先推荐 release 而不是 debug`() {
+        Env.device = device("arm64-v8a")
+        val best = GitHubMapper.pickBestForTest(
+            listOf(
+                asset("FitHub-1.0.0-debug.apk"),
+                asset("FitHub-1.0.0-release.apk"),
+            ),
+        )
+        assertEquals("FitHub-1.0.0-release.apk", best!!.name)
+    }
+
+    /** unsigned 装不上，哪怕名字里带 release 也不能被选中 */
+    @Test
+    fun `unsigned 产物即使带 release 字样也不被选中`() {
+        Env.device = device("arm64-v8a")
+        assertFalse(
+            "app-release-unsigned 不算 release 产物",
+            GitHubMapper.isReleaseBuild("App-1.0.0-release-unsigned.apk"),
+        )
+        assertTrue(GitHubMapper.isReleaseBuild("App-1.0.0-release.apk"))
+    }
+
+    /** 架构完全匹配的包仍然压过 release 偏好 —— release 只在同一档里起作用 */
+    @Test
+    fun `架构匹配的包仍然优先于 release 偏好`() {
+        Env.device = device("arm64-v8a")
+        val best = GitHubMapper.pickBestForTest(
+            listOf(
+                asset("App-1.0.0-release.apk"),
+                asset("App-1.0.0-arm64-v8a.apk"),
+            ),
+        )
+        assertEquals("App-1.0.0-arm64-v8a.apk", best!!.name)
     }
 
     @Test

@@ -99,6 +99,11 @@
     <string name="detail_tab_assets">Assets</string>
     <string name="detail_tab_changelog">Changelog</string>
     <string name="detail_tab_readme">README</string>
+    <string name="detail_tab_code">Code</string>
+    <string name="code_empty_dir">This directory is empty.</string>`r`n    <string name="code_loading_file">Fetching file…</string>
+    <string name="code_open_in_github">Open on GitHub</string>
+    <string name="code_too_large">This file is %1 - too large to show here.</string>
+    <string name="code_not_text">This file is not text (%1), so there is nothing to read here.</string>
     <string name="detail_action_back">Back</string>
     <string name="detail_action_follow">Follow updates</string>
     <string name="detail_action_unfollow">Unfollow</string>
@@ -303,7 +308,11 @@
     <string name="info_update_not_found">Could not check: %1$s</string>
     <string name="info_update_local_newer">Your build %1$s is newer than the latest release %2$s</string>
     <string name="info_update_local_newer_para">You have %1$s installed and the latest release is only %2$s — this build is ahead of the release.</string>
-    <string name="info_update_go">View and install</string>
+    <string name="info_update_go">Download and install</string>
+    <string name="info_update_downloading">Downloading…</string>
+    <string name="info_update_no_asset">That release has nothing installable on this device.</string>
+    <string name="info_update_install_failed">Install did not succeed: %1$s</string>
+    <string name="info_update_installed">Installed. Confirm it in the system installer.</string>
     <string name="login_title">Sign in with GitHub</string>
     <string name="login_nocfg_h">This build cannot sign in</string>
     <string name="login_nocfg_desc">It has no GitHub OAuth App client_id compiled in.</string>

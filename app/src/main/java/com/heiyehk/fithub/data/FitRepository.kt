@@ -2,6 +2,7 @@ package com.heiyehk.fithub.data
 
 import android.content.Context
 import com.heiyehk.fithub.data.remote.ApiResult
+import com.heiyehk.fithub.data.remote.ContentEntryDto
 import com.heiyehk.fithub.data.remote.DiscoverSort
 import com.heiyehk.fithub.data.remote.GitHubApi
 import com.heiyehk.fithub.data.remote.GitHubMapper
@@ -40,12 +41,14 @@ sealed interface Async<out T> {
 class FitRepository(val api: GitHubApi) {
 
     /**
-     * FitHub 自己的仓库全名。改仓库地址时这里和 manifest 的 homepage、
-     * `LinkEngine.BUILT_IN_LINKS` 三处要一起改。
+     * FitHub 自己的仓库全名。改仓库地址时这里和
+     * `LinkEngine.BUILT_IN_LINKS` **两处**要一起改。
      *
-     * 不再是 private：「检查更新」查到新版之后要能把用户送进这个仓库的详情页，
-     * 那条路上已经有产物列表、适配判定、SHA-256、下载与安装 —— 复用它，
-     * 而不是在这个页面上再写一遍下载安装。
+     * （原注释里还提到 manifest 的 homepage —— manifest 早就没有那个字段了，
+     * 照着找会找不到。）
+     *
+     * 不再是 private：「检查更新」查到新版之后要拿到最新版的安装包直接下载安装，
+     * 而「挑哪个包」的规则在 [GitHubMapper] 里 —— 见 [latestInstallableOfSelf]。
      */
     val selfRepo = "heiyehk/FitHub"
 
@@ -99,6 +102,104 @@ class FitRepository(val api: GitHubApi) {
 
             is ApiResult.Err -> Async.Err(r.message)
         }
+
+    /**
+ * 最新 release 里「最该给用户的那一个」产物，供「检查更新 → 直接下载」用。
+ *
+ * 走 [detail] 而不是再写一遍 releases 拼装：**挑哪个包**的规则（架构匹配优先、
+ * 同级里 release 压过 debug / unsigned）已经写在 [GitHubMapper] 里了，
+ * 这里自己再挑一次就会出现两套口径，详情页和更新页给出两个不同的包。
+ *
+ * 返回 null 表示这个 release 里没有能装到本机的产物 —— 调用方要照实说，
+ * 不要退回去随便拿一个 APK。
+ */
+suspend fun latestInstallableOfSelf(): Async<Asset?> =
+    when (val d = detail(selfRepo)) {
+        is Async.Ok -> Async.Ok(d.value.best)
+        is Async.Err -> Async.Err(d.message)
+        Async.Loading -> Async.Loading
+    }
+
+    /**
+ * 列目录。[path] 空串表示仓库根。
+ *
+ * 返回的元素顺序交给 UI 排（目录在前），这里保持接口原样 ——
+ * 排序是展示层的事，混进数据层会让「接口返回了什么」和「界面显示什么」对不上，
+ * 排查时看不出是谁动的顺序。
+ */
+suspend fun contentsDir(fullName: String, path: String): Async<List<ContentEntryDto>> =
+    when (val r = api.contentsDir(fullName, path)) {
+        is ApiResult.Ok -> Async.Ok(r.value, r.fromCache, r.ageMs)
+        is ApiResult.Err -> Async.Err(r.message)
+    }
+
+/** 取一个文件的正文。[FileBody.text] 为 null 表示「这里显示不了，去 GitHub 看」 */
+suspend fun contentsFile(fullName: String, path: String): Async<FileBody> =
+    when (val r = api.contentsFile(fullName, path)) {
+        is ApiResult.Ok -> Async.Ok(FileBody.from(r.value))
+        is ApiResult.Err -> Async.Err(r.message)
+    }
+
+/**
+ * 一个可显示的文件正文。
+ *
+ * [text] 为 null 有三种原因，都归到「在 GitHub 上打开」这一条路：
+ * 超过 1 MB（GitHub 根本不回内容）、超过 [MAX_TEXT_BYTES]、
+ * 或者解码出来不是 UTF-8 文本（二进制文件 base64 一样能解，解出来是乱码）。
+ *
+ * 最后一条不能靠「看起来有没有乱码」判断 —— 中文代码文件本来就有大量非 ASCII。
+ * 用 UTF-8 严格解码：合法的才给，非法替换字符占比高的当二进制。
+ */
+data class FileBody(
+    val name: String,
+    val text: String?,
+    val htmlUrl: String?,
+    val sizeBytes: Long,
+) {
+    companion object {
+        /** 单个文件正文上限，与 README 一致。超了就别在手机上渲染长文件 */
+        const val MAX_TEXT_BYTES = 512 * 1024
+
+        /**
+         * 解码比例上限：UTF-8 里替换字符（U+FFFD）超过这个比例就当二进制。
+         *
+         * 0.01 意味着「十万个字符里最多一个坏字符」。正常源码远低于这个值，
+         * 而二进制解出来会满屏都是。
+         */
+        private const val MAX_REPLACEMENT_RATIO = 0.01
+
+        /**
+         * 把接口返回的一条转成可显示的正文。
+         *
+         * 做成伴生对象的工厂而不是扩展函数：扩展函数声明在 companion 里的话，
+         * 调用处**不在作用域内**，少一个 import 就编不过 —— 而这种失败在
+         * 「谁都能看到这个函数」的直觉下特别费时间。
+         */
+        fun from(dto: ContentEntryDto): FileBody {
+            val url = dto.htmlUrl ?: dto.downloadUrl
+            val tooBig = dto.size > MAX_TEXT_BYTES
+            val noContent = dto.encoding != "base64" || dto.content.isBlank()
+            if (tooBig || noContent) return FileBody(dto.name, null, url, dto.size)
+
+            val bytes = runCatching {
+                java.util.Base64.getMimeDecoder().decode(dto.content)
+            }.getOrNull() ?: return FileBody(dto.name, null, url, dto.size)
+
+            val decoded = runCatching {
+                String(bytes, Charsets.UTF_8)
+            }.getOrNull() ?: return FileBody(dto.name, null, url, dto.size)
+
+            // String(bytes, UTF_8) 是替换式的：坏字节已经变成 U+FFFD 了，
+            // 所以只能靠「这个字符多不多」判断是不是文本。
+            val bad = decoded.count { it == '�' }
+            return if (decoded.isNotEmpty() && bad > decoded.length * MAX_REPLACEMENT_RATIO) {
+                FileBody(dto.name, null, url, dto.size)
+            } else {
+                FileBody(dto.name, decoded, url, dto.size)
+            }
+        }
+    }
+}
 
     suspend fun detail(fullName: String): Async<Repo> {
         val repoDto = api.repo(fullName)

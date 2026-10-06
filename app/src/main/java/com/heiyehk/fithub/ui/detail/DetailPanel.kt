@@ -66,6 +66,7 @@ import com.heiyehk.fithub.data.Asset
 import com.heiyehk.fithub.data.Async
 import com.heiyehk.fithub.data.DeviceState
 import com.heiyehk.fithub.data.FitEngine
+import com.heiyehk.fithub.data.FitRepository
 import com.heiyehk.fithub.data.FitState
 import com.heiyehk.fithub.data.Readme
 import com.heiyehk.fithub.data.Prefs
@@ -134,15 +135,19 @@ object DetailMetrics {
 }
 
 /**
- * 详情页的三个 tab。
+ * 详情页的四个 tab。
  *
  * 第三个用 README 而不是「说明」：GitHub 上那个文件就叫 README，页面上又已经有
  * 适配产物和更新日志两个中文 tab，叫「说明」会让人以为这是 FitHub 自己写的介绍。
+ *
+ * 代码浏览排在最后：它一次要花请求（每个目录一次），放前面会让人以为
+ * 「适配产物」和「更新日志」也是按需加载的。
  */
 enum class DetailTab(@StringRes val labelRes: Int) {
     Assets(R.string.detail_tab_assets),
     Changelog(R.string.detail_tab_changelog),
     Readme(R.string.detail_tab_readme),
+    Code(R.string.detail_tab_code),
 }
 
 /**
@@ -269,6 +274,14 @@ fun DetailPanel(
     onReadmeLoad: () -> Unit = {},
     /** 该仓库是否已被关注（来自本地关注列表，不是组件内临时状态） */
     following: Boolean = false,
+    /**
+     * 代码浏览要发请求，所以要拿得到 [FitRepository]。
+     *
+     * 刻意传对象而不是把「列目录 / 取文件」做成回调：回调形式在这里没有第二种实现，
+     * 只会让人以为以后会有。仓库详情那一坨数据都在 `repo`（模型）里，
+     * 网络层的入口就是 FitRepository，直接给最省事。
+     */
+    codeRepo: FitRepository,
     onToggleFollow: () -> Unit = {},
     /** 手动刷新当前仓库。不为 null 时顶栏显示刷新按钮 */
     onRefresh: (() -> Unit)? = null,
@@ -538,8 +551,19 @@ fun DetailPanel(
                 })
             }
 
-            // 三个 tab 的内容
+            // 四个 tab 的内容
             when (tab) {
+                // 代码浏览是一个整体 item，不能像其它 tab 那样摊成很多 item：
+                // 它内部自己是一列，摊开会让「当前目录」这个状态和列表项混在一起。
+                DetailTab.Code -> {
+                    item(key = "code") {
+                        CodeBrowser(
+                            fullName = repo.id,
+                            repo = codeRepo,
+                        )
+                    }
+                }
+
                 DetailTab.Assets -> {
                     // 折叠的是**非安装包**（源码包、桌面包、校验文件），不是「没猜中 ABI 的 apk」。
                     //

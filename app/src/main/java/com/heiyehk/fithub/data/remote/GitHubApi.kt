@@ -21,6 +21,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -418,6 +419,61 @@ class GitHubApi(cacheDir: File, private val authProvider: () -> String? = { null
      */
     fun peekSearch(query: String): Pair<SearchResponse, Long>? =
         peek<SearchResponse>(searchCacheKey(query))
+
+    /**
+     * 列一个目录。
+     *
+     * 走 [contents] 但声明成数组 —— 目录返回的是数组、文件返回的是对象，
+     * 两个必须分开声明，否则解码时类型对不上。
+     *
+     * **目录结果落缓存**（6 小时 TTL，和别处一致）：翻代码的人来来回回退，
+     * 每次都发请求会把这 App 最紧的那份配额（未登录 60 次/小时）烧光，
+     * 而目录列表是变化最慢的数据之一。
+     *
+     * 刻意**没有**用 `git/trees?recursive=1`：它一次能给整棵树，但超大仓库会
+     * `truncated = true`，而截断了用户看不出来 —— 一个文件浏览器建在残缺的列表上，
+     * 点进某个目录发现是空的，没有任何提示能解释为什么。
+     */
+    suspend fun contentsDir(fullName: String, path: String): ApiResult<List<ContentEntryDto>> =
+        get(
+            contentsPath(fullName, path),
+            contentsCacheKey("contents-dir", fullName, path),
+        )
+
+    /**
+     * 取一个文件的正文。
+     *
+     * **不缓存**：代码浏览里点开的每个文件都是一次性内容，缓存下来只会让
+     * 缓存目录无限膨胀，而重复读同一个文件的收益接近零（用户看完就走了）。
+     */
+    suspend fun contentsFile(fullName: String, path: String): ApiResult<ContentEntryDto> =
+        get<ContentEntryDto>(
+            contentsPath(fullName, path),
+            contentsCacheKey("contents-file", fullName, path),
+            cacheable = false,
+        )
+
+    private fun contentsPath(fullName: String, path: String) =
+        if (path.isBlank()) "$base/repos/$fullName/contents" else "$base/repos/$fullName/contents/$path"
+
+    /**
+     * 目录 / 文件的缓存 key。
+     *
+     * 路径**不能**直接拼进去：落盘时 `[^A-Za-z0-9._-]` 会被换成 `_`，而 `-` 和 `_`
+     * 都是合法的目录名，于是 `a/b` 和 `a-b` 会算出同一个 key —— 点开一个目录却
+     * 看到另一个目录的内容，**而且不会有任何报错**。和 BUG-09 同一类：key 在两处
+     * 各自拼的时候，撞上了也看不出来。
+     *
+     * 所以取路径的 SHA-1 前 16 位十六进制。目录名的字符集比十六进制宽得多，
+     * 64 位在这个量级（一个仓库几百个目录）撞车的概率可以忽略。
+     */
+    private fun contentsCacheKey(prefix: String, fullName: String, path: String): String {
+        val fp = MessageDigest.getInstance("SHA-1")
+            .digest(path.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+            .take(16)
+        return "$prefix-$fullName-$fp"
+    }
 
     /**
      * 拉取仓库 README 原文。

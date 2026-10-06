@@ -196,8 +196,22 @@ object GitHubMapper {
                 inferred = true
             }
 
+            // 文件名里没有 ABI，但**它确实是 APK/AAB**。
+            //
+            // 原来这里判 Unknown，于是 `pickBest` 挑不出它、`best` 为 null、
+            // 主 CTA 退化成「打开原始安装包链接」—— 一个装得上的包被当成了装不上的。
+            // 后果不只是文案难看：整个 App 对**所有没有 ABI 标记的仓库**都失效了，
+            // 而那占了绝大多数（FitHub 自己的 release 就是这种）。
+            //
+            // 判 Degrade 而不是 Match，因为「文件名没写架构」和「确认是 universal」
+            // 是两回事，前者要如实说（[reason_abi_unknown]），后者才敢说
+            // 「没有单独分包、会多占体积」（[reason_universal_only]）。
+            //
+            // **这不算猜**：下载之后本来就会用 PackageManager 读真实清单，
+            // 那套确认机制一直在（见 [com.heiyehk.fithub.data.FitEngine.withDownloadedFacts]
+            // 与 Asset.realAbis）。原来的 Unknown 是在那次确认之前就把候选丢掉了。
             else -> {
-                fit = FitState.Unknown
+                fit = FitState.Degrade
                 reason = Explain.of(R.string.reason_abi_unknown)
                 inferred = false
             }
@@ -233,11 +247,42 @@ object GitHubMapper {
         }
     }
 
-    private fun pickBest(assets: List<Asset>): Asset? =
+    /**
+ * 挑「最该给用户的那一个」。
+ *
+ * 逐级降级：架构完全匹配 → 只是降级 → 没有架构信息但确实是 APK → 没有架构信息。
+ * 每一级内部再用 [preferRelease] 排序，让 release 包压过同级的 debug / unsigned。
+ *
+ * 为什么要在同级里挑 release：debug 包通常带 debug 签名、还可能带 applicationId 后缀
+ * （`com.foo.debug`），装了要么和正式版冲突、要么装成一个用不上的分身；
+ * unsigned 更是根本装不上。这两个都不是「更省事的选择」，是**装不出想要结果的选择**。
+ */
+private fun pickBest(assets: List<Asset>): Asset? =
         assets.firstOrNull { it.fit == FitState.Match && it.kind == "APK" }
             ?: assets.firstOrNull { it.fit == FitState.Match }
-            ?: assets.firstOrNull { it.fit == FitState.Degrade && it.kind == "APK" }
-            ?: assets.firstOrNull { it.fit == FitState.Degrade }
+            ?: preferRelease(assets) { it.fit == FitState.Degrade && it.kind == "APK" }
+            ?: preferRelease(assets) { it.fit == FitState.Degrade }
+
+    /**
+     * 在同一档候选里先挑 release 产物。
+     *
+     * `-unsigned` 排在 `-release` 之后而不是之前：文件名里同时出现两个词时
+     * （`app-release-unsigned.apk`），它装不上，不能因为含 "release" 就被选中。
+     * 两个都没有时保持传入顺序 —— GitHub 返回什么就是什么，不额外排序。
+     */
+    private fun preferRelease(assets: List<Asset>, pred: (Asset) -> Boolean): Asset? {
+        val candidates = assets.filter(pred)
+        return candidates.firstOrNull { isReleaseBuild(it.name) } ?: candidates.firstOrNull()
+    }
+
+    /** 文件名像正式发布包，且不是未签名的那种 */
+    internal fun isReleaseBuild(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower.contains("release") && !lower.contains("unsigned")
+    }
+
+    /** 暴露给单测：[pickBest] 私有，但「同级里挑 release」这条规则必须钉住 */
+    internal fun pickBestForTest(assets: List<Asset>): Asset? = pickBest(assets)
 
     fun verdictOf(assets: List<Asset>): Verdict {
         if (assets.isEmpty()) return Verdict.Unknown

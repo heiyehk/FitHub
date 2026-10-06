@@ -180,6 +180,30 @@ data class ReadmeDto(
     val size: Int = 0,
 )
 
+/**
+ * `GET /repos/{o}/{r}/contents/{path}` 的一条结果。
+ *
+ * **同一个接口有两种返回形状**：路径是目录时返回**数组**，是文件时返回**单个对象**。
+ * 字段取并集，靠 `type` 区分 —— 所以反序列化时必须知道要的是哪一种，
+ * 缓存 key 也必须分开（见 [GitHubApi.contentsDir] 与 [GitHubApi.contentsFile]）。
+ *
+ * [content] 只在**文件**上有值，且是 base64。大于 1 MB 的文件 GitHub 不给内容，
+ * 只回 `encoding = "none"` 和空的 [content] —— 这时必须走「在 GitHub 上打开」，
+ * 当成空文件渲染会让用户以为文件是空的。
+ */
+@Serializable
+data class ContentEntryDto(
+    val name: String = "",
+    val path: String = "",
+    /** "file" 或 "dir" */
+    val type: String = "",
+    val size: Long = 0,
+    @SerialName("download_url") val downloadUrl: String? = null,
+    @SerialName("html_url") val htmlUrl: String? = null,
+    val content: String = "",
+    val encoding: String = "",
+)
+
 @Serializable
 data class RateResources(
     val core: RateDto = RateDto(),
