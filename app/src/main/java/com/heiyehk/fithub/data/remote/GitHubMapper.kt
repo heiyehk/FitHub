@@ -251,15 +251,20 @@ object GitHubMapper {
  * 挑「最该给用户的那一个」。
  *
  * 逐级降级：架构完全匹配 → 只是降级 → 没有架构信息但确实是 APK → 没有架构信息。
- * 每一级内部再用 [preferRelease] 排序，让 release 包压过同级的 debug / unsigned。
+ * **每一档内部都先挑 release**，不只降级档。
  *
- * 为什么要在同级里挑 release：debug 包通常带 debug 签名、还可能带 applicationId 后缀
+ * 为什么每一档都要：产物行的「完全匹配」是下载之后读真实清单得出的，
+ * 所以一个仓库里 debug 包和 release 包**常常同时都是 Match**。
+ * 之前只有降级档用了 [preferRelease]，匹配档还是 `firstOrNull` ——
+ * 谁在列表里靠前谁赢，而 debug 常常就排在前面。
+ *
+ * 为什么 release 优先：debug 包通常带 debug 签名、还可能带 applicationId 后缀
  * （`com.foo.debug`），装了要么和正式版冲突、要么装成一个用不上的分身；
  * unsigned 更是根本装不上。这两个都不是「更省事的选择」，是**装不出想要结果的选择**。
  */
 private fun pickBest(assets: List<Asset>): Asset? =
-        assets.firstOrNull { it.fit == FitState.Match && it.kind == "APK" }
-            ?: assets.firstOrNull { it.fit == FitState.Match }
+        preferRelease(assets) { it.fit == FitState.Match && it.kind == "APK" }
+            ?: preferRelease(assets) { it.fit == FitState.Match }
             ?: preferRelease(assets) { it.fit == FitState.Degrade && it.kind == "APK" }
             ?: preferRelease(assets) { it.fit == FitState.Degrade }
 

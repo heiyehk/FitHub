@@ -178,6 +178,24 @@ class FitEngineTest {
         assertEquals("App-1.0.0-arm64-v8a.apk", best!!.name)
     }
 
+    /**
+     * debug 和 release **同时都是架构匹配**时，必须选 release。
+     *
+     * 「完全匹配」是下载之后读真实清单判出来的，所以一个仓库里两个包常常同时 Match。
+     * 之前只有降级档做了 release 偏好，匹配档还是 `firstOrNull` ——
+     * 谁在列表里靠前谁赢，而 debug 常常就排在前面，于是点「下载」下到的是 debug 包：
+     * 带 debug 签名、可能带 applicationId 后缀，装上也不是用户要的那个应用。
+     */
+    @Test
+    fun `两个包都架构匹配时选 release 而不是 debug`() {
+        Env.device = device("arm64-v8a")
+        val debug = asset("App-1.0.0-debug.apk").copy(fit = FitState.Match)
+        val release = asset("App-1.0.0-release.apk").copy(fit = FitState.Match)
+        // debug 故意排在前面 —— 列表顺序是 GitHub 返回的，字母序 d < r
+        val best = GitHubMapper.pickBestForTest(listOf(debug, release))
+        assertEquals("App-1.0.0-release.apk", best!!.name)
+    }
+
     @Test
     fun `macOS 桌面包判为装不上并写明本机`() {
         Env.device = device("arm64-v8a")

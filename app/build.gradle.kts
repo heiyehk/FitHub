@@ -86,8 +86,8 @@ android {
         applicationId = "com.heiyehk.fithub"
         minSdk = 26          // SigningInfo / PackageInstaller 能力下限
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.0.6"
+        versionCode = 7
+        versionName = "0.0.7"
 
         // 取值逻辑见文件顶部的 githubClientId（环境变量 / gradle 属性 / 空串）。
         buildConfigField(
