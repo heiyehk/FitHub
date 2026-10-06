@@ -253,7 +253,7 @@ object DownloadCenter { val state: StateFlow<Progress> … }
 ### 判据
 
 **「同一事实的两个副本，生命周期不一样」是 bug 的温床。** 凡是进程级单例
-（`object` / `companion object`）持有状态，而界面另有��份副本，
+（`object` / `companion object`）持有状态，而界面另有一份副本，
 就必须问一句：**冷启动 / 转屏 / 页面重建之后，这两份对得上吗？**
 
 具体到写法：**状态是全局的，初始化就不能写死。** `remember { mutableStateOf(X) }`
@@ -353,4 +353,78 @@ onRepoTap = { myProjectsOpen = false;  open(it.id, placeholder = it) }  // 我�
 「谁画在谁上面」如果取决于两个列表碰巧一致，那它早晚会不一致。
 
 **多层叠加时，先确认 z-order 再改逻辑** —— 逻辑改对了但被盖住，表现和没改一样。
+
+---
+
+## BUG-09 · 刷新作废了一个从来就不存在的缓存 key
+
+**现象**：仓库详情点顶栏第二个按钮（刷新）**看起来没反应**。
+不报错、不转圈，stars / 描述 / 最后推送会变，但 **release 列表纹丝不动** ——
+而 release 列表恰恰是详情页的主体。顶栏那行「N 分钟前」还会显示成「刚刚」，
+界面一边说这是最新的，一边摊着旧数据。
+
+**根因**：缓存 key 里带了 `perPage`，作废的地方却写死了另一个值。
+
+```kotlin
+// GitHubApi.releases()：key 里带 perPage
+get("$base/repos/$fullName/releases", "releases-$fullName-$perPage", ...)
+
+// GitHubApi.invalidateRepo()：作废的是 -3
+invalidate("repo-$fullName", "releases-$fullName-3")
+```
+
+而 `FitRepository.RELEASES_PER_PAGE` 早就从 3 改成了 20。
+**`releases-<仓库>-3` 这个 key 从来没有被写出来过**，所以每次刷新都是删空气。
+
+旁边那段注释写的正是这个毛病：
+
+> 两个 key 都要作废，否则刷新后 releases 仍读旧的，**看起来像没刷新**。
+
+改那个数字（BUG-02 修 v2rayNG 被判成空仓库）的时候只动了 `RELEASES_PER_PAGE`，
+没回头看注释在说什么。
+
+### 为什么不能简单地把 `perPage` 从 key 里去掉
+
+先想过「反正都是同一个仓库的 release，去掉后缀一个 key 就够」。
+**那是错的**：`get()` 每次都会写回缓存，而缓存里存的是**那次请求实际返回的条数**。
+`hasInstallable`（perPage=1）先跑一次就会把**一条结果**写进去，
+详情页（perPage=20）随后读到它 —— 页面上只剩一个版本。
+这正是 BUG-02 那一类事故换个方向重现。
+
+所以 `perPage` 必须留在 key 里。真正能根治的是**按前缀作废**：
+新增一个 perPage 不会再漏，而且不必维护取值清单。
+
+### 一个更值得记的教训：第一版测试是假绿的
+
+修完之后写了 6 条 `RepoCachePrefixTest`，只测前缀删除本身。然后做变异验证 ——
+把 `invalidateRepo` 改回写死 `-3`，**206 条测试一条都没红**。
+
+因为没有一条断言穿过「`invalidateRepo` → releases 的真实 key」这条路径。
+**测一个「用对了就永远对」的纯函数，挡不住接线接错。**
+
+补的 `GitHubApiInvalidateTest` 直接用 `GitHubApi` 自己的 key 构造函数造缓存，
+再断言 `invalidateRepo` 把它清掉。同样的变异让 3 条全部转红，其余 203 条不受影响。
+
+### 判据
+
+**同一个 key 家族的两端必须由同一个函数拼出来。**
+`discoverCacheKey` / `searchCacheKey` 早就抽出来了，releases 这条漏了 ——
+写死一个数字和从常量读一个数字，在代码里长得一模一样。
+
+**「作废清单」这类东西会过期，而过期时没有报错。**
+写死取值清单能挡住「有人又改了这个数字」，但挡不住「新增了一个取值」。
+按前缀删才是不用维护清单的做法。
+
+以及：**断言要穿过真正出问题的那条接线。**
+从症状倒推，第一个测试通常会落在最底层那个「看起来最像出问题」的函数上 ——
+而那里恰好是最不容易接错、也最不需要测的一层。
+
+### 附带的两个修正
+
+1. 测试写完立刻发现自己**注释里的推理是错的**：原以为前缀 `releases-owner_repo-`
+   会误伤 `owner/repo2`，断言当场转红 —— 那个 key 是 `releases-owner_repo2-20`，
+   `-` 的位置对不上，并没有被误伤。真正会被连坐的是 `owner/repo-2`。
+   注释和测试一起改了。**测试除了抓 bug，也会抓自己对 bug 的错误理解。**
+2. 第一版有两条测试把「保留同仓库元信息缓存」当成了正确行为 —— 而
+   `invalidateRepo` 本来就该清元信息，那正是「刷新」的定义。改回断言两份都清。
 

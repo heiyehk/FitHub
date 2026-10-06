@@ -133,6 +133,17 @@ class GitHubApi(cacheDir: File, private val authProvider: () -> String? = { null
     }
 
     /**
+     * 按前缀作废一批缓存条目。
+     *
+     * 给「同一个 key 家族由多处用不同后缀取同一份数据」用的 ——
+     * 现在只有 releases，perPage 在后缀里。少作废一条的症状不是报错，
+     * 而是「刷新按了没反应」，所以这里不写死取值清单。
+     */
+    private fun invalidatePrefix(prefix: String) {
+        cache.removeByPrefix(CACHE_VERSION + prefix)
+    }
+
+    /**
      * **stale-while-revalidate**：盘上有数据就立刻返回，同时后台去刷新。
      *
      * 之前是「TTL 内用缓存，TTL 过期就纯等网络，只有网络**抛异常**才回退旧缓存」。
@@ -332,11 +343,18 @@ class GitHubApi(cacheDir: File, private val authProvider: () -> String? = { null
     /**
      * 丢弃一个仓库的详情缓存。
      *
-     * 详情由元信息和 releases 两份组成，两个 key 都要作废，
-     * 否则刷新后 releases 仍读旧的，看起来像没刷新。
+     * 详情由元信息和 releases 两份组成，两个都要作废，否则刷新后 releases 仍读旧的，
+     * 看起来像没刷新。
+     *
+     * releases **按前缀删**，不按 `releases-X-<perPage>` 逐个删：perPage 在 key 里
+     * （缓存里存的就是那次请求实际返回的条数，1 条不能当成 20 条读），
+     * 而本项目用到 1 / 5 / 20 三种，写死清单的话加一个取值就会漏掉那一条 ——
+     * 症状是「刷新按了没有任何反应」，不报错也不转圈。这里原来写死的是 `-3`，
+     * 而详情早就改成 20 了，所以 releases 缓存从来没被真正作废过。
      */
     fun invalidateRepo(fullName: String) {
-        invalidate("repo-$fullName", "releases-$fullName-3")
+        invalidate("repo-$fullName")
+        invalidatePrefix("releases-$fullName-")
     }
 
     /** 丢弃发现页两段的缓存。key 在这里拼一次，避免两处写错 */
@@ -349,6 +367,18 @@ class GitHubApi(cacheDir: File, private val authProvider: () -> String? = { null
     suspend fun repo(fullName: String): ApiResult<RepoDto> =
         get("$base/repos/$fullName", "repo-$fullName")
 
+    /**
+     * 拉一个仓库的 releases。
+     *
+     * **perPage 必须留在缓存 key 里**，别为了「少几个缓存文件」把它去掉：
+     * 缓存里存的是**那次请求实际返回的条数**。同一个仓库若共用一个 key，
+     * `hasInstallable`（perPage=1）先跑一次就会把一条结果写进去，
+     * 详情页（perPage=20）随后读到它 —— 页面上只剩一个版本。
+     * 那正是「拉 3 条 + 过滤预发布 = 把有产物的仓库说成空仓库」那一类事故。
+     *
+     * 代价是同一个仓库可能在盘上有多条 releases 缓存。作废方按**前缀**删
+     * （见 [invalidateRepo]），所以新增一个 perPage 不会漏。
+     */
     suspend fun releases(
         fullName: String,
         perPage: Int = 3,
@@ -357,10 +387,16 @@ class GitHubApi(cacheDir: File, private val authProvider: () -> String? = { null
     ): ApiResult<List<ReleaseDto>> =
         get(
             "$base/repos/$fullName/releases",
-            "releases-$fullName-$perPage",
+            releasesCacheKey(fullName, perPage),
             mapOf("per_page" to perPage.toString()),
             forceRefresh = forceRefresh,
         )
+
+    /**
+     * releases 的缓存 key。抽出来是因为 [releases] 和单测都要用 ——
+     * 各拼一次必然对不上，而对不上的症状是「刷新没反应」，不报错。
+     */
+    internal fun releasesCacheKey(fullName: String, perPage: Int) = "releases-$fullName-$perPage"
 
     /** 统一搜索：GitHub 搜索语法直接透传，App 不做二次解析 */
     suspend fun search(query: String): ApiResult<SearchResponse> =

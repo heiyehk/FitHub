@@ -9,7 +9,7 @@ import javax.xml.parsers.DocumentBuilderFactory
  * 格式化占位符与实参类型必须对得上。
  *
  * 这不是假想的问题：`myprojects_repo_counts` 写成 `fork %1$d · watch %2$d`，而调用点
- * 传的是 `(Int, Env.formatStars(...))` —— 第二个实参是 **String**。运行到列表第��行
+ * 传的是 `(Int, Env.formatStars(...))` —— 第二个实参是 **String**。运行到列表第一行
  * 就 `IllegalFormatConversionException: d != java.lang.String` 直接崩掉整个页面。
  *
  * 为什么构建期没拦住：既有的翻译校验只比 en / zh 两边的占位符**是否一致**，

@@ -23,7 +23,7 @@ It does two things a generic browser tab cannot:
 
 ## Status
 
-Early and incomplete. Version `0.0.2`, and the following is accurate as of that release:
+Early and incomplete. Version `0.0.3`, and the following is accurate as of that release:
 
 | Area | State |
 |---|---|
@@ -46,7 +46,7 @@ Early and incomplete. Version `0.0.2`, and the following is accurate as of that 
 | Share | Working — system share sheet with the repo, its fit verdict for this device, and the Release URL. Text, not an image card |
 | Preferences | Working — appearance (follow system / light / dark), include prereleases, require a SHA-256 checksum before install |
 
-APKs ship with every release. Take [`FitHub-v0.0.2-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.2) — signed, R8-minified, and carrying all four ABIs. The `-debug` variant is there when you want logcat.
+APKs ship with every release. Take [`FitHub-v0.0.3-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.3) — signed, R8-minified, and carrying all four ABIs. The `-debug` variant is there when you want logcat.
 
 ## What it does
 
