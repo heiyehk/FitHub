@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FitHub · 开源应用发现与直装</title>
+<meta name="description" content="把 GitHub Releases 变成一个像应用商店一样好逛的界面，并告诉你哪一个安装包适合这台设备。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<!-- ── icon sprite ─────────────────────────────────────────────── -->
+<svg class="sprite" aria-hidden="true">
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M15.8 15.8L20 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.6l2.47 5.2 5.53.77-4.03 3.9.98 5.63L12 16.4l-4.95 2.7.98-5.63L4 9.57l5.53-.77L12 3.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-star-fill" viewBox="0 0 24 24"><path d="M12 3.6l2.47 5.2 5.53.77-4.03 3.9.98 5.63L12 16.4l-4.95 2.7.98-5.63L4 9.57l5.53-.77L12 3.6z" fill="currentColor"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.8v11m0 0l-4-4m4 4l4-4M4.6 19.4h14.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3.6v11m0-11L8.2 7.4M12 3.6l3.8 3.8M5 13.4v5.2c0 .9.7 1.6 1.6 1.6h10.8c.9 0 1.6-.7 1.6-1.6v-5.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6.6 4.6h10.8v15.2L12 15.9l-5.4 3.9V4.6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.6l4.4 4.4L19 7.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7.6v5.2m0 3.1v.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11m0-11l-11 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-package" viewBox="0 0 24 24"><path d="M12 3.6l7.2 3.9v8.9L12 20.4l-7.2-4V7.5L12 3.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M4.9 7.6L12 11.5l7.1-3.9M12 11.5v8.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-device" viewBox="0 0 24 24"><rect x="7" y="3.4" width="10" height="17.2" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.6 17.4h2.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7.6V12l3 1.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.6l6.6 2.3v5.5c0 4.1-2.8 7.2-6.6 8.6-3.8-1.4-6.6-4.5-6.6-8.6V5.9L12 3.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M9.4 12.2l1.9 1.9 3.4-3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.4l1.7 4.9 4.9 1.7-4.9 1.7L12 16.6l-1.7-4.9L5.4 10l4.9-1.7L12 3.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M18.4 16.2l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2z" fill="currentColor"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-7.4 7.4M17.4 14.2v3.6c0 .8-.6 1.4-1.4 1.4H6.2c-.8 0-1.4-.6-1.4-1.4V8.2c0-.8.6-1.4 1.4-1.4h3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+</svg>
+
+<!-- ── stage ────────────────────────────────────────────────────── -->
+<div class="stage" id="stage">
+
+  <div class="shell" id="shell">
+
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="FitHub 首页">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 28 28"><path d="M8.4 5.6h11.2a2.8 2.8 0 0 1 2.8 2.8v11.2a2.8 2.8 0 0 1-2.8 2.8H8.4a2.8 2.8 0 0 1-2.8-2.8V8.4a2.8 2.8 0 0 1 2.8-2.8z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9.6 18.4V9.6M18.4 9.6v8.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9.6 14h8.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </span>
+        <span class="brand-name">FitHub</span>
+      </a>
+
+      <nav class="nav" aria-label="主导航">
+        <a class="nav-item is-on" href="#">发现</a>
+        <a class="nav-item" href="#">更新<span class="nav-dot" data-count="3">3</span></a>
+        <a class="nav-item" href="#">本机</a>
+        <a class="nav-item" href="#">订阅</a>
+      </nav>
+
+      <div class="topbar-right">
+        <button class="searchbtn" id="searchBtn" type="button">
+          <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+          <span>搜索仓库、用户、组织</span>
+          <kbd>Ctrl K</kbd>
+        </button>
+        <div class="quota" title="未登录配额">
+          <span class="quota-num" data-tabular>47</span><span class="quota-den" data-tabular>/60</span>
+          <span class="quota-label">次/小时</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="page" id="page">
+
+      <!-- 智能发现 -->
+      <section class="hero">
+        <div class="hero-left">
+          <p class="eyebrow">
+            <span class="eyebrow-date" data-tabular>2026-10-04</span>
+            <span class="eyebrow-sep">/</span>
+            <span id="heroDevice">Pixel 9 Pro · arm64-v8a · Android 15</span>
+          </p>
+          <h1 class="hero-title">今天装<span class="hero-title-em">什么</span></h1>
+          <p class="hero-sub">
+            全部结果都来自 GitHub 的客观信号：Trending、star、最近 release 时间。<br>
+            每一个卡片都已经解析过安装包，只展示<strong>你这台设备真的能装</strong>的那一个。
+          </p>
+          <div class="hero-actions">
+            <button class="btn btn-solid" type="button" id="scanBtn">
+              <svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>
+              扫描本机应用
+            </button>
+            <button class="btn btn-ghost" type="button" id="updatesBtn">
+              <span class="btn-badge" data-tabular>3</span> 个应用可升级
+            </button>
+          </div>
+        </div>
+
+        <div class="hero-right">
+          <div class="radar" id="radar" aria-hidden="true">
+            <span class="radar-ring r1"></span>
+            <span class="radar-ring r2"></span>
+            <span class="radar-ring r3"></span>
+            <span class="radar-sweep"></span>
+            <span class="radar-core"><svg class="ic"><use href="#i-device"/></svg></span>
+          </div>
+          <dl class="fitlines">
+            <div class="fitline"><dt>本机架构</dt><dd data-tabular>arm64-v8a</dd></div>
+            <div class="fitline"><dt>系统版本</dt><dd data-tabular>API 35</dd></div>
+            <div class="fitline"><dt>已装可升级</dt><dd data-tabular>3</dd></div>
+            <div class="fitline"><dt>今日新增</dt><dd data-tabular>28</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <!-- 智能筛选 -->
+      <div class="smartbar" id="smartbar">
+        <div class="smartbar-lead">
+          <svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg>
+          <span>智能发现</span>
+        </div>
+        <div class="chips" id="chips" role="tablist" aria-label="智能发现筛选"></div>
+        <button class="filterbtn" type="button" id="filterBtn">
+          <svg class="ic" aria-hidden="true"><use href="#i-filter"/></svg>
+          筛选
+        </button>
+      </div>
+
+      <div class="feed" id="feed"></div>
+
+      <footer class="foot">
+        <div class="foot-lead">
+          <span class="foot-mark">FitHub</span>
+          <p>不登录也能用全部浏览与下载功能，登录只是为了让你少等几秒。</p>
+        </div>
+        <nav class="foot-nav">
+          <a href="#">开源协议</a><a href="#">隐私</a><a href="#">GitHub API 配额</a><a href="#">反馈</a>
+        </nav>
+        <p class="foot-meta">界面原型 · 数据为演示用示例 · 不含推荐算法</p>
+      </footer>
+
+    </main>
+  </div>
+
+  <!-- ── detail drawer ──────────────────────────────────────────── -->
+  <div class="scrim" id="scrim" aria-hidden="true"></div>
+
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dwTitle" aria-hidden="true">
+    <header class="dw-top">
+      <button class="iconbtn" id="dwClose" type="button" aria-label="关闭详情">
+        <svg class="ic"><use href="#i-arrow-left"/></svg>
+      </button>
+      <div class="dw-top-actions">
+        <button class="iconbtn" id="dwStar" type="button" aria-label="收藏"><svg class="ic"><use href="#i-star"/></svg></button>
+        <button class="iconbtn" id="dwShare" type="button" aria-label="分享"><svg class="ic"><use href="#i-share"/></svg></button>
+      </div>
+    </header>
+
+    <div class="dw-scroll" id="dwScroll">
+      <div class="dw-hero" id="dwHero"></div>
+      <nav class="dw-tabs" id="dwTabs" role="tablist">
+        <button class="dw-tab is-on" role="tab" data-tab="assets">适配产物</button>
+        <button class="dw-tab" role="tab" data-tab="changelog">更新日志</button>
+        <button class="dw-tab" role="tab" data-tab="readme">说明</button>
+      </nav>
+      <div class="dw-body" id="dwBody"></div>
+    </div>
+
+    <footer class="dw-foot" id="dwFoot"></footer>
+  </aside>
+
+  <!-- ── search palette ─────────────────────────────────────────── -->
+  <div class="palette" id="palette" aria-hidden="true">
+    <div class="palette-box" role="dialog" aria-modal="true" aria-label="搜索">
+      <div class="palette-input">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="q" type="text" placeholder="搜索仓库 / 用户 / 组织" autocomplete="off" spellcheck="false">
+        <kbd>Esc</kbd>
+      </div>
+      <div class="palette-hint">支持 GitHub 搜索语法：<code>has:release</code> <code>language:kotlin</code> <code>topic:compose</code></div>
+      <div class="palette-tabs" id="palTabs">
+        <button class="pal-tab is-on" data-type="repo">仓库</button>
+        <button class="pal-tab" data-type="user">用户</button>
+        <button class="pal-tab" data-type="org">组织</button>
+      </div>
+      <div class="palette-list" id="palList"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="flyer" id="flyer" aria-hidden="true"></div>
+</div>
+
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

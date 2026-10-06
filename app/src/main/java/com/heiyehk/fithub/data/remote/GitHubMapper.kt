@@ -1,0 +1,253 @@
+package com.heiyehk.fithub.data.remote
+
+import com.heiyehk.fithub.R
+import com.heiyehk.fithub.data.Asset
+import com.heiyehk.fithub.data.DataSource
+import com.heiyehk.fithub.data.DeviceState
+import com.heiyehk.fithub.data.Dist
+import com.heiyehk.fithub.data.Explain
+import com.heiyehk.fithub.data.FitEngine
+import com.heiyehk.fithub.data.FitState
+import com.heiyehk.fithub.data.Readme
+import com.heiyehk.fithub.data.ReleaseNote
+import com.heiyehk.fithub.data.Repo
+import com.heiyehk.fithub.data.Env
+import com.heiyehk.fithub.data.SignedBy
+import com.heiyehk.fithub.data.Verdict
+
+/**
+ * DTO → 领域模型。
+ *
+ * 未解析的安装包，ABI 只能来自文件名推断，不能当作解析结果。
+ * Asset.inferred 标记这一点，UI 照实显示。
+ */
+object GitHubMapper {
+
+    /** 语言 → 展示色，没见过的给中性色 */
+    private val LANG_COLORS = mapOf(
+        "Kotlin" to 0xFFA97BFF, "Java" to 0xFFB07219, "Dart" to 0xFF0175C2,
+        "C++" to 0xFF00599C, "C" to 0xFF555555, "Rust" to 0xFFDEA584,
+        "Go" to 0xFF00ADD8, "Python" to 0xFF3572A5, "TypeScript" to 0xFF3178C6,
+        "JavaScript" to 0xFFF1E05A, "Swift" to 0xFFF05138, "Ruby" to 0xFF701516,
+        "Shell" to 0xFF89E051, "C#" to 0xFF178600, "PHP" to 0xFF4F5D95,
+    )
+
+    /** 从文件名里认 ABI —— 这是推断，不是解析 */
+    private val ABI_PATTERNS = listOf(
+        "arm64-v8a" to "arm64-v8a",
+        "aarch64" to "arm64-v8a",
+        "armeabi-v7a" to "armeabi-v7a",
+        "armv7" to "armeabi-v7a",
+        "x86_64" to "x86_64",
+        "x86-64" to "x86_64",
+        "universal" to "universal",
+        "anydpi" to "universal",
+        "x86" to "x86",
+    )
+
+    fun inferAbi(fileName: String): String? {
+        val lower = fileName.lowercase()
+        // 先匹配长模式，避免 x86 抢在 x86_64 前面
+        return ABI_PATTERNS.sortedByDescending { it.first.length }
+            .firstOrNull { lower.contains(it.first) }?.second
+    }
+
+    /** 语言 → 展示色，没见过的给中性色。订阅快照没有 DTO 可用，靠这个补回颜色 */
+    fun langColorOf(lang: String): Long = LANG_COLORS[lang] ?: 0xFF8A908A
+
+    fun toRepo(dto: RepoDto): Repo {
+        val lang = dto.language ?: "—"
+        val color = langColorOf(lang)
+        return Repo(
+            id = dto.fullName,
+            name = dto.name.ifBlank { dto.slug },
+            owner = dto.owner.login,
+            monogram = dto.name.take(2).uppercase().ifBlank { "GH" },
+            desc = dto.description?.takeIf { it.isNotBlank() }
+                ?: "这个仓库没有写描述。GitHub 上有 release 才会出现在这里。",
+            lang = lang,
+            langColor = color,
+            langShare = listOf(100),
+            stars = dto.stargazersCount,
+            forks = dto.forksCount,
+            watchers = dto.subscribersCount ?: 0,
+            issues = dto.openIssuesCount,
+            version = "—",
+            versionCode = 0,
+            date = dto.lastPush,
+            topics = dto.topics.take(4),
+            tileBg = lighten(color),
+            tileFg = color,
+            history = emptyList(),
+            dist = Dist("", "", emptyList(), 0, "—", SignedBy.Unverified, 0.0),
+            source = DataSource.GitHub,
+            htmlUrl = dto.htmlUrl,
+            license = dto.license?.spdxId ?: "",
+            archived = dto.archived,
+            hasRealRelease = false,
+        )
+    }
+
+    /** 调亮背景色，让图标块在白底上还能有层次 */
+    private fun lighten(color: Long): Long {
+        val a = ((color shr 24) and 0xFF).toLong()
+        val r = ((color shr 16) and 0xFF).toInt()
+        val g = ((color shr 8) and 0xFF).toInt()
+        val b = (color and 0xFF).toInt()
+        fun mix(c: Int, target: Int) = (c + (target - c) * 0.87).toInt().coerceIn(0, 255)
+        return ((a.toInt() shl 24) or (mix(r, 247) shl 16) or (mix(g, 249) shl 8) or mix(b, 250)).toLong()
+    }
+
+    /**
+     * 把 release 列表并进仓库。
+     *
+     * [includePrerelease] 来自「我的 → 默认包含预发布版本」开关。默认关：不勾时
+     * 预发布既不参与「最新版」的判定，也不进适配产物的候选集。
+     * 选取规则见 [ReleasePick]。
+     */
+    fun applyReleases(
+        repo: Repo,
+        releases: List<ReleaseDto>,
+        includePrerelease: Boolean = false,
+    ): Repo {
+        val stable = ReleasePick.visible(releases, includePrerelease)
+
+        // 正式版一条都取不到、而预发布是有东西的：宁可把预发布摆出来（并标清楚），
+        // 也不要显示「这个仓库没有产物」—— 用户看到那句话会以为得自己发包，
+        // 而实际上点开 GitHub 就是满屏的安装包。
+        val shown = stable.ifEmpty { releases.filter { !it.draft } }
+        val onlyPrerelease = stable.isEmpty() && shown.isNotEmpty()
+
+        val latest = shown.firstOrNull()
+        val assets = shown.flatMap { rel ->
+            rel.assets.map { dto -> toAsset(dto, rel) }
+        }
+        // 更新日志保留**原始 Markdown**，不在这里拆行 —— 拆了渲染器就再也认不出来
+        val notes = shown.take(RELEASES_IN_HISTORY).map { rel ->
+            ReleaseNote(
+                tag = rel.tagName,
+                date = rel.date.ifBlank { repo.date },
+                prerelease = rel.prerelease,
+                body = rel.body.orEmpty(),
+            )
+        }
+
+        return repo.copy(
+            version = latest?.tagName ?: "—",
+            date = latest?.date?.ifBlank { repo.date } ?: repo.date,
+            history = notes,
+            // 区别要分清：真的一个 release 都没有 vs 只发过预发布（开关打开就能用）
+            hasRealRelease = shown.isNotEmpty(),
+            prereleaseOnly = onlyPrerelease,
+            releasesError = null,
+            downloads = assets.sumOf { it.downloadCount },
+        ).withAssets(assets, linkInstalled(repo))
+    }
+
+    /** 更新日志 tab 最多列这么多个版本，多了那一屏就没法看了 */
+    private const val RELEASES_IN_HISTORY = 10
+
+    fun toAsset(dto: AssetDto, rel: ReleaseDto): Asset {
+        val device = Env.device
+        val abi = inferAbi(dto.name)
+        // 只有 APK / AAB 能装到本机，其它按目标平台判定
+        val installable = dto.kind == "APK" || dto.kind == "AAB"
+        val platform = detectPlatform(dto.name)
+
+        val fit: FitState
+        val reason: Explain?
+        val inferred: Boolean
+
+        when {
+            dto.isChecksum || dto.kind == "SHA256" -> {
+                fit = FitState.Checksum
+                reason = null
+                inferred = false
+            }
+
+            !installable -> {
+                fit = FitState.Mismatch
+                reason = if (platform != null) {
+                    Explain(
+                        R.string.reason_desktop_package,
+                        listOf(platform, device.name, device.sdkLabel),
+                    )
+                } else {
+                    Explain(R.string.reason_not_android, listOf(dto.kind))
+                }
+                inferred = false
+            }
+
+            abi == device.abi -> {
+                fit = FitState.Match
+                reason = Explain.of(R.string.reason_abi_inferred)
+                inferred = true
+            }
+
+            abi == "universal" -> {
+                fit = FitState.Degrade
+                reason = Explain(R.string.reason_universal_only, listOf(device.abi))
+                inferred = true
+            }
+
+            abi != null -> {
+                fit = FitState.Mismatch
+                reason = Explain(R.string.reason_abi_mismatch, listOf(device.abi, abi))
+                inferred = true
+            }
+
+            else -> {
+                fit = FitState.Unknown
+                reason = Explain.of(R.string.reason_abi_unknown)
+                inferred = false
+            }
+        }
+
+        return Asset(
+            name = dto.name,
+            kind = dto.kind,
+            abi = if (installable) abi else null,
+            sizeMb = (Math.round(dto.size / 1048576.0 * 10.0) / 10.0),
+            sha = null,
+            sdkLabel = null,
+            fit = fit,
+            reason = reason,
+            downloadUrl = dto.browserDownloadUrl,
+            contentType = dto.contentType,
+            downloadCount = dto.downloadCount,
+            publishedAt = rel.publishedAt?.take(10),
+            tag = rel.tagName,
+            prerelease = rel.prerelease,
+            inferred = inferred,
+        )
+    }
+
+    /** 从文件名认目标平台 —— 用于说明「这包是给谁用的」 */
+    private fun detectPlatform(name: String): String? {
+        val n = name.lowercase()
+        return when {
+            n.contains("windows") || n.contains("win64") || n.endsWith(".exe") -> "Windows"
+            n.contains("macos") || n.contains("darwin") || n.contains("osx") || n.endsWith(".dmg") -> "macOS"
+            n.contains("linux") || n.contains("gnu") || n.endsWith(".deb") || n.endsWith(".rpm") -> "Linux"
+            else -> null
+        }
+    }
+
+    private fun pickBest(assets: List<Asset>): Asset? =
+        assets.firstOrNull { it.fit == FitState.Match && it.kind == "APK" }
+            ?: assets.firstOrNull { it.fit == FitState.Match }
+            ?: assets.firstOrNull { it.fit == FitState.Degrade && it.kind == "APK" }
+            ?: assets.firstOrNull { it.fit == FitState.Degrade }
+
+    fun verdictOf(assets: List<Asset>): Verdict {
+        if (assets.isEmpty()) return Verdict.Unknown
+        val best = pickBest(assets) ?: return Verdict.Unknown
+        return if (best.fit == FitState.Match) Verdict.Ok else Verdict.Warn
+    }
+
+    /**
+     * 本机是否装着这个仓库。判定统一交给 [FitEngine.deviceState]，
+     * 依据 [LinkEngine] 写入的真实绑定；绑不上就是 [DeviceState.NotInstalled]。
+     */
+    private fun linkInstalled(repo: Repo): DeviceState = FitEngine.deviceState(repo)
+}

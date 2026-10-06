@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      安装链路需要的三项：
+
+      REQUEST_INSTALL_PACKAGES  调 PackageInstaller 装 APK 必需。系统会在用户第一次
+                                 安装时弹「允许安装未知来源应用」，这是 Android 的设计，
+                                 不是可以绕过的。
+      POST_NOTIFICATIONS         API 33+ 发下载进度通知。降级可用：不给也不崩，只是没有通知。
+      FOREGROUND_SERVICE(+DATA_SYNC)  下载几十 MB 时用户会离开详情页，进程进后台被回收
+                                 就断了而且没人知道。前台服务给通知栏一条常驻进度。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!--
+      安装包落在公共下载目录（Download/FitHub/），用户要能在文件管理器里看到它。
+
+      API 29+ 走 MediaStore，这条权限被系统忽略，所以 maxSdkVersion 卡在 28。
+      API 26–28 还没有分区存储，必须有这个运行时权限才能往公共目录写 ——
+      没有它整个下载链路在 Android 8/9 上直接写不进去。
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!--
+      Android 11 (API 30) 起有包可见性过滤：不声明就看不见别人家的应用。
+      不加这个，ScanEngine 只能看到系统包 + 自己，扫出来的「本机共安装 N 个」是假的
+      （实测 97 个里少了刚装上的 NewPipe）。
+      本 App 的核心功能就是「扫已装应用并给出可升级结论」，属于 QUERY_ALL_PACKAGES
+      政策允许的核心用途。
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <!--
+      兜底：万一权限被策略或用户限制，至少能看见「能被启动器启动 / 能被分享到 / 处理链接」的应用，
+      比只看见系统包强。FitEngine 的结论仍然只基于真正读到的数据。
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="*/*" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.FitHub">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:theme="@style/Theme.FitHub"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 下载 APK 的前台服务。dataSync 类型是 Android 14 起的硬要求。 -->
+        <service
+            android:name=".data.install.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!--
+          接 PackageInstaller 的安装结果。exported=false：它只由我们自己的 PendingIntent
+          显式广播触发，不需要被别的应用调到。
+        -->
+        <receiver
+            android:name=".data.install.InstallResultReceiver"
+            android:exported="false" />
+    </application>
+
+</manifest>

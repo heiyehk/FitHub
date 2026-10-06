@@ -1,0 +1,82 @@
+# ── Gradle / 构建产物 ──────────────────────────────────────
+.gradle/
+.kotlin/
+build/
+out/
+captures/
+reports/
+test-results/
+
+# ── 打包产物 ───────────────────────────────────────────────
+dist/
+*.apk
+*.aab
+*.ap_
+*.aex
+*.dex
+*.class
+
+# 依赖 jar 不入库。Gradle wrapper 必须留，否则别人 clone 下来构建不了
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# ── 签名密钥：绝不入库 ─────────────────────────────────────
+# keystore.properties 指向本机 keystore，内含 storePassword / keyPassword
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+# 模板可以入库（不含真实值）
+!keystore.properties.example
+
+# ── 本机环境 / 凭据 ────────────────────────────────────────
+local.properties
+.env
+.env.*
+!.env.example
+secrets.properties
+
+# ── IDE ───────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+nbproject/
+.externalNativeBuild/
+.cxx/
+
+# ── 崩溃与诊断转储 ─────────────────────────────────────────
+# AGP 9.1.0 自身崩溃时（见 README「已知限制」）会留下这些
+*.hprof
+hs_err_pid*
+replay_pid*
+
+# ── 系统垃圾文件 ───────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── 编辑器临时文件 ─────────────────────────────────────────
+*~
+*.swp
+*.swo
+*.orig
+*.rej
+*.bak
+
+# ── 日志与临时文件 ─────────────────────────────────────────
+*.log
+*.part
+*.tmp
+*.temp

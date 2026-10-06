@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自动生成，**不要手改**。要改字请改 scripts/icon/wordmark-c.svg 后重跑本脚本。
+
+  FitHub 字标：Arial Bold 20px，字距 -0.2，
+  视口 108x108，水平按 advance 居中、垂直按实际墨迹居中。
+
+  为什么是死 path：Android 的 VectorDrawable 只支持 <path>，没有 <text> 也没有内置字体。
+  改文案必须重新转换 —— 路径由 opentype.js 的 toPathData() 生成，不要手写坐标缩放。
+
+  前景层在 adaptive-icon 里被裁到中心 66dp 安全区。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M27.21 61.04L24.32 61.04L24.32 46.72L34.13 46.72L34.13 49.15L27.21 49.15L27.21 52.54L33.19 52.54L33.19 54.96L27.21 54.96"
+        android:fillColor="#FF7FE3C4"
+        android:fillType="nonZero" />
+
+    <path
+        android:pathData="M39.04 49.26L36.30 49.26L36.30 46.72L39.04 46.72L39.04 49.26M39.04 61.04L36.30 61.04L36.30 50.67L39.04 50.67"
+        android:fillColor="#FF7FE3C4"
+        android:fillType="nonZero" />
+
+    <path
+        android:pathData="M44.53 50.67L46.41 50.67L46.41 52.86L44.53 52.86L44.53 57.04Q44.53 58.31 44.59 58.52Q44.64 58.73 44.83 58.86Q45.02 59 45.30 59Q45.68 59 46.40 58.74L46.63 60.87Q45.68 61.28 44.47 61.28Q43.72 61.28 43.13 61.03Q42.53 60.78 42.25 60.38Q41.98 59.99 41.87 59.31Q41.78 58.83 41.78 57.38L41.78 52.86L40.52 52.86L40.52 50.67L41.78 50.67L41.78 48.61L44.53 47.01"
+        android:fillColor="#FF7FE3C4"
+        android:fillType="nonZero" />
+
+    <path
+        android:pathData="M51.03 61.04L48.14 61.04L48.14 46.72L51.03 46.72L51.03 52.36L56.70 52.36L56.70 46.72L59.59 46.72L59.59 61.04L56.70 61.04L56.70 54.78L51.03 54.78"
+        android:fillColor="#FFFFFFFF"
+        android:fillType="nonZero" />
+
+    <path
+        android:pathData="M71.73 61.04L69.18 61.04L69.18 59.49Q68.62 60.32 67.69 60.80Q66.77 61.28 65.75 61.28Q64.70 61.28 63.87 60.82Q63.04 60.36 62.67 59.53Q62.30 58.70 62.30 57.23L62.30 50.67L65.04 50.67L65.04 55.44Q65.04 57.62 65.19 58.12Q65.35 58.61 65.75 58.90Q66.15 59.19 66.76 59.19Q67.46 59.19 68.02 58.80Q68.58 58.41 68.78 57.84Q68.99 57.27 68.99 55.04L68.99 50.67L71.73 50.67"
+        android:fillColor="#FFFFFFFF"
+        android:fillType="nonZero" />
+
+    <path
+        android:pathData="M76.81 61.04L74.26 61.04L74.26 46.72L77 46.72L77 51.88Q78.27 50.44 80.01 50.44Q81.90 50.44 83.14 51.81Q84.38 53.18 84.38 55.75Q84.38 58.40 83.12 59.84Q81.85 61.28 80.05 61.28Q79.16 61.28 78.29 60.83Q77.43 60.39 76.81 59.52L76.81 61.04M76.98 55.63Q76.98 57.24 77.49 58.01Q78.20 59.11 79.38 59.11Q80.29 59.11 80.93 58.33Q81.57 57.55 81.57 55.88Q81.57 54.11 80.93 53.32Q80.28 52.54 79.28 52.54Q78.29 52.54 77.64 53.30Q76.98 54.07 76.98 55.63"
+        android:fillColor="#FFFFFFFF"
+        android:fillType="nonZero" />
+</vector>

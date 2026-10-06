@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App 支持的语言。API 33+ 的系统设置会据此生成「应用语言」列表项，用户从系统侧
+  改也会生效（AppLocale.current 以系统返回值为准）。
+
+  这里列的是**用户可选项**，不是全部资源目录。系统语言为其他语种时按 Android 资源
+  回退规则命中 values/（英文），这正是「跟随系统、否则默认英文」的落点。
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="zh" />
+</locale-config>

@@ -1,0 +1,192 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # client_id 注入到构建环境，由 app/build.gradle.kts 在配置期读走。
+    #
+    # 放 **Repository variable** 而不是 secret，依据就是上面那句「它不是秘密」：
+    # Device Flow 连 client_secret 都不需要，这个值本来就明文躺在每个 APK 里，
+    # 任何人都能反编译拿到。而 secret 会在日志里被替换成 `***`，
+    # 于是 `Build succeeded` 这类含该字符串的正常输出也被一起打码，
+    # 排查时看到的是一堆毫无意义的星号 —— 拿非敏感的构建期值去换日志可读性不划算。
+    #
+    # 但仍然不放进仓库：少一份可以现成拿去仿冒授权页的素材，也让每个 clone 的人
+    # 填自己的。未配置时是空串，构建照常，登录入口显示为不可用。
+    #
+    # ⚠️ variable 和 secret 是两套独立的读接口：`${{ vars.X }}` 读不到 secret，
+    #    `${{ secrets.X }}` 也读不到 variable，同名不互通。
+    # ⚠️ 变量**不做日志脱敏**，也别把签名密钥那几项挪过来（见下方 Restore release keystore）。
+    env:
+      FITHUB_CLIENT_ID: ${{ vars.FITHUB_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 21 是实际验证过能构建 AGP 9.1.0 + Gradle 9.3.1 的版本。
+      # build.gradle.kts 里的 VERSION_17 是字节码目标，不是工具链要求。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # 本机是靠 ANDROID_HOME 环境变量找到 SDK 的，local.properties 是 gitignore 的，
+      # 所以 runner 上必须自己装。少了 platforms;android-36 时 Gradle 会在解析
+      # compileSdk 阶段就失败，单元测试根本跑不到。
+      #
+      # 不用 android-actions/setup-android —— 那个 action 在当前 runner 镜像上
+      # 自己就失败了。GitHub 的 ubuntu 镜像已经预装了 SDK 和 cmdline-tools，直接用。
+      - name: Install Android SDK packages
+        run: |
+          set -euo pipefail
+          SDKMANAGER=""
+          for c in "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+                   "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+                   "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"; do
+            if [ -x "$c" ]; then SDKMANAGER="$c"; break; fi
+          done
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found. ANDROID_HOME=$ANDROID_HOME"
+            ls -la "${ANDROID_HOME:-/usr/local/lib/android/sdk}" || true
+            exit 1
+          fi
+          echo "using $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          "$SDKMANAGER" --list_installed
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      # 日志要翻很久才看得到红色那几行。把失败用例直接提到 run 页面顶部的
+      # Summary 里；任务在跑测试之前就失败时也会说明，而不是留一片空白。
+      - name: Publish test report
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import glob, os, xml.etree.ElementTree as ET
+          print("## Unit test report\n")
+          files = glob.glob("app/build/test-results/testDebugUnitTest/TEST-*.xml")
+          if not files:
+              print("No test result XML. The test task failed before running - see the step log.")
+              raise SystemExit(0)
+          total = failed = 0
+          for f in files:
+              try:
+                  root = ET.parse(f).getroot()
+              except Exception as e:
+                  print(f"- `{os.path.basename(f)}` unreadable: {e}\n")
+                  continue
+              total += int(root.get("tests", 0))
+              n_fail = int(root.get("failures", 0)) + int(root.get("errors", 0))
+              failed += n_fail
+              if not n_fail:
+                  continue
+              print(f"### {root.get('name','?').split('.')[-1]} - {n_fail} failed\n")
+              for tc in root.iter("testcase"):
+                  for bad in list(tc.findall("failure")) + list(tc.findall("error")):
+                      msg = (bad.get("message") or bad.get("type") or "").strip()
+                      first = msg.splitlines()[0] if msg else "(no message)"
+                      print(f"- `{tc.get('name')}` - {first}")
+                      text = (bad.text or "").strip().splitlines()
+                      for line in text[:6]:
+                          print(f"    {line}")
+                      print()
+          print(f"**{total} tests, {failed} failed.**\n")
+          PY
+
+      - name: Debug APK
+        run: ./gradlew assembleDebug
+
+      # build.gradle.kts 已经会读根目录的 keystore.properties，存在就用它签名。
+      # 所以这里只需要把密钥还原成那个文件，不必改动构建脚本。
+      - name: Restore release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::notice::No KEYSTORE_BASE64 secret configured - release APK will be unsigned."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > app/fithub-release.jks
+          cat > keystore.properties <<EOF
+          storeFile=app/fithub-release.jks
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Release APK
+        run: ./gradlew assembleRelease
+
+      - name: Collect APKs
+        run: |
+          mkdir -p dist
+          for f in app/build/outputs/apk/debug/*.apk \
+                   app/build/outputs/apk/release/*.apk; do
+            [ -e "$f" ] || continue
+            base=$(basename "$f" .apk)
+            case "$f" in
+              *unsigned*) name="FitHub-${GITHUB_REF_NAME}-${base#app-}-unsigned.apk" ;;
+              *)          name="FitHub-${GITHUB_REF_NAME}-${base#app-}.apk" ;;
+            esac
+            cp "$f" "dist/$name"
+            echo "dist/$name"
+          done
+          ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apks
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: apks
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true
+          body: |
+            ## FitHub ${{ github.ref_name }}
+
+            | Variant | Notes |
+            |---|---|
+            | `*-release.apk` | Signed, R8 minified, resources shrunk |
+            | `*-release-unsigned.apk` | Only present when no signing secret is configured |
+            | `*-debug.apk` | Debuggable, no minification |
+
+            Minimum Android 8.0 (API 26).
+            Checksums are not published; verify the APK you download matches
+            the one your build produces from the same tag.

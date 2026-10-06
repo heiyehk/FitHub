@@ -1,0 +1,47 @@
+[versions]
+agp = "9.1.0"
+kotlin = "2.2.21"
+composeBom = "2025.06.01"
+activityCompose = "1.10.1"
+ktor = "3.1.3"
+serialization = "1.8.1"
+markdown = "0.35.0"
+junit = "4.13.2"
+
+[libraries]
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+
+ktor-client-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }
+ktor-client-cio = { group = "io.ktor", name = "ktor-client-cio", version.ref = "ktor" }
+ktor-client-content-negotiation = { group = "io.ktor", name = "ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-client-mock = { group = "io.ktor", name = "ktor-client-mock", version.ref = "ktor" }
+ktor-serialization-json = { group = "io.ktor", name = "ktor-serialization-kotlinx-json", version.ref = "ktor" }
+serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+
+# 详情页「说明」tab 的 Markdown 渲染。取 -m3 变体拿 Material 3 默认样式，
+# 不引 -coil2/-coil3 变体：图片加载会带来 Coil，与 release 包体积目标冲突。
+#
+# 版本被硬钉在 0.35.0，**不要升**。原因如下（背景另见 docs/bugs.md）：
+# 0.36.0 起的版本（0.36~0.43 实测全部）由 Compose runtime 1.10+ 编译，字节码里
+# 引用了 `ComposablesKt.getCurrentCompositeKeyHashCode`，而本项目的 compose-bom
+# 2025.06.01 只提供 runtime 1.8.3（该方法 1.10.0 才加入）。结果是一进「说明」tab、
+# Markdown 解析完进入渲染就必崩：
+#   java.lang.NoSuchMethodError: No static method getCurrentCompositeKeyHashCode(...)
+#     at com.mikepenz.markdown.compose.MarkdownKt.MarkdownSuccess(Markdown.kt:395)
+# 升级 Compose BOM 到 1.10+ 是另一条路，但会牵连 Kotlin 2.2.21 / AGP 9.1.0 /
+# compose 编译器插件整条链，代价远大于一个 README 渲染的需求。
+markdown = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdown" }
+
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
