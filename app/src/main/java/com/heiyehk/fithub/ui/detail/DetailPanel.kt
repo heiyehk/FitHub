@@ -10,6 +10,8 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -107,7 +109,9 @@ import com.heiyehk.fithub.ui.icons.FiCheck
 import com.heiyehk.fithub.ui.icons.FiChevron
 import com.heiyehk.fithub.ui.icons.FiDownload
 import com.heiyehk.fithub.ui.icons.FiPackage
+import com.heiyehk.fithub.ui.icons.FiPause
 import com.heiyehk.fithub.ui.icons.FiRefresh
+import com.heiyehk.fithub.ui.icons.FiClose
 import com.heiyehk.fithub.ui.icons.FiExternal
 import com.heiyehk.fithub.ui.icons.FiShare
 import com.heiyehk.fithub.ui.icons.FiShield
@@ -956,7 +960,12 @@ fun DetailPanel(
             }
             HairLine()
             Column(Modifier.padding(horizontal = DetailMetrics.sidePad, vertical = 14.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                 PrimaryButton(
+                    modifier = Modifier.weight(1f),
                     text = when {
                         installStep is InstallStep.Blocked -> stringResource(R.string.detail_cta_blocked)
                         installStep is InstallStep.Done -> stringResource(R.string.detail_cta_done)
@@ -978,8 +987,11 @@ fun DetailPanel(
                         installStep is InstallStep.Done -> FiCheck
                         installStep is InstallStep.Idle ->
                             if (repo.dist.desktop || repo.verdict == Verdict.Unknown) FiExternal else FiDownload
-                        // 下载中 / 暂停态这个按钮管的是这一轮下载，别再挂盾牌
-                        installStep is InstallStep.Downloading || installStep is InstallStep.Paused -> FiDownload
+                        // 下载中 = 这个按钮会暂停，所以给暂停图标；暂停态 = 会继续，所以给刷新。
+                        // 两者共用一个下载箭头时，用户点了确实会停，但完全看不出来 ——
+                        // 于是「没法暂停」这个结论就是这么来的。
+                        installStep is InstallStep.Downloading -> FiPause
+                        installStep is InstallStep.Paused -> FiRefresh
                         else -> FiShield
                     },
                     // 下载中**不能**禁用：这个状态下点它就是暂停。之前连它一起锁死，
@@ -992,7 +1004,18 @@ fun DetailPanel(
                     onClick = {
                         when (val step = installStep) {
                             is InstallStep.Downloading -> {
-                                repo.best?.let { DownloadCenter.pause(context, it.name) }
+                                // 暂停**正在下的那个**，不是 repo.best。
+                                //
+                                // 从产物行的按钮起的下载，目标完全可能是另一个产物
+                                // （甚至不是 best）。原来固定暂停 repo.best.name，
+                                // 服务那边匹配不上就什么都不做 —— 表现正是
+                                // 「点了没反应，也确实没法暂停」。
+                                val live = when (val s = DownloadCenter.state.value) {
+                                    is DownloadCenter.Progress.Running -> s.assetName
+                                    is DownloadCenter.Progress.Paused -> s.assetName
+                                    else -> null
+                                } ?: repo.best?.name
+                                live?.let { DownloadCenter.pause(context, it) }
                             }
 
                             // 暂停 = 继续下载。走的是同一条前台服务链路，续传由服务负责
@@ -1086,6 +1109,45 @@ fun DetailPanel(
                         }
                     },
                 )
+
+                /*
+                 * 取消按钮在下载**进行中**也必须出现。
+                 *
+                 * 之前只有暂停态才有出口（还是塞在进度卡里的一对胶囊），于是
+                 * 「正在下载」时 App 里一个取消都没有 —— 只剩通知栏那条。想中止一个
+                 * 大文件只能先暂停、才能找到取消，而暂停本身又因为图标不变而看不出来。
+                 *
+                 * 用 AnimatedVisibility 而不是直接 if：按钮凭空出现会让手指落空，
+                 * 淡入的同时主按钮收窄，两者的位置变化是连续的。
+                 */
+                val cancellable = installStep is InstallStep.Downloading ||
+                    installStep is InstallStep.Paused
+                AnimatedVisibility(
+                    visible = cancellable,
+                    enter = fadeIn(tween(200)) + expandHorizontally(tween(200)),
+                    exit = fadeOut(tween(160)) + shrinkHorizontally(tween(160)),
+                ) {
+                    com.heiyehk.fithub.ui.components.IconCircleButton(
+                        icon = FiClose,
+                        contentDescription = stringResource(R.string.download_action_cancel),
+                        onClick = {
+                            // 同暂停：取消也要打**正在下的那个**，否则从产物行起的
+                            // 下载按主按钮取消不掉 —— 看着就是这个按钮没用
+                            val live = when (val s = DownloadCenter.state.value) {
+                                is DownloadCenter.Progress.Running -> s.assetName
+                                is DownloadCenter.Progress.Paused -> s.assetName
+                                else -> null
+                            } ?: repo.best?.name
+                            live?.let {
+                                DownloadCenter.cancel(context, it)
+                                downloads.remove(it)
+                            }
+                            DownloadCenter.reset()
+                            install.value = InstallStep.Idle
+                        },
+                    )
+                }
+                }
                 Spacer(Modifier.height(10.dp))
                 MetaRow(horizontalArrangement = Arrangement.Center) {
                     val best = repo.best
@@ -1167,7 +1229,14 @@ private fun InstallProgress(
                     tint = p.ink3,
                     modifier = Modifier.size(14.dp),
                 )
-                else -> CircularProgress(progress = step.progressFraction, size = 14.dp, color = p.accent)
+                else -> CircularProgress(
+                    // 14dp / 2dp 的环在手机上是一根几乎看不见的细丝，
+                    // 深色底上尤其糊 —— 放大加粗才读得出「还差多少」。
+                    progress = step.progressFraction,
+                    size = 20.dp,
+                    color = p.accent,
+                    stroke = 3.dp,
+                )
             }
         }
         Spacer(Modifier.height(9.dp))

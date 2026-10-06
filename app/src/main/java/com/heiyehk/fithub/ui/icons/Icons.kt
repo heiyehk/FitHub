@@ -111,6 +111,14 @@ val FiClock: ImageVector by lazy {
     fitIcon("Clock", circle(12f, 12f, 8.2f) + " M12,7.6 L12,12 L15,13.8")
 }
 
+/**
+ * 暂停。下载中点主按钮就是这个动作，所以图标必须说清楚是「暂停」而不是「下载」——
+ * 之前下载中和暂停态共用一个下载箭头，点了会停但看不出来，看起来就像「点了没反应」。
+ */
+val FiPause: ImageVector by lazy {
+    fitIcon("Pause", "M8.4,5.4 L8.4,18.6 M15.6,5.4 L15.6,18.6")
+}
+
 /** 代码浏览里的目录行 */
 val FiFolder: ImageVector by lazy {
     fitIcon(
