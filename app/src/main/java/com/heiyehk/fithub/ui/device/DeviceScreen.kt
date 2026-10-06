@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -83,6 +84,7 @@ import kotlinx.coroutines.delay
  * 关联不上的应用留在「未关联」分组里等待用户绑定。
  */
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun DeviceScreen(
     scan: ScanResult?,
     bindings: Map<String, Repo>,
@@ -165,8 +167,15 @@ fun DeviceScreen(
         }
     }
 
-    LazyColumn(
+    // 下拉刷新。顶栏那个重新扫描的按钮保留 —— 手势是「顺手刷一下」，
+    // 按钮是「我要重新扫」，两者不互相取代。
+    PullToRefreshBox(
+        isRefreshing = scanning,
+        onRefresh = onRescan,
         modifier = modifier.fillMaxSize().background(p.surface),
+    ) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
         state = listState,
         contentPadding = PaddingValues(bottom = TabBarScrimHeight + 28.dp),
     ) {
@@ -467,6 +476,7 @@ fun DeviceScreen(
                 }
             }
         }
+    }
     }
 }
 

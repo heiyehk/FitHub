@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -244,6 +245,7 @@ sealed interface DownloadState {
 }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun DetailPanel(
     repo: Repo,
     contentAlpha: Float,
@@ -309,6 +311,32 @@ fun DetailPanel(
         mutableStateOf(restoreStep(DownloadCenter.state.value, repo.best?.name))
     }
     val installStep = install.value
+
+    /**
+     * 把**全局**下载状态接进 [install]。
+     *
+     * 这一步之前缺了，于是「从产物行起的下载」在主按钮上完全看不见：
+     * 主按钮读的是 [install]，而产物行走的是另一条入口，压根不写它 ——
+     * 于是按钮一直停在 Idle，文案还是「下载适配版本」、图标还是下载箭头，
+     * 暂停图标和取消按钮也就永远不出现。看起来就是「这两个功能没做」。
+     *
+     * 只在 [install] 是 Idle 时同步：主按钮自己发起的下载已经写好了状态，
+     * 再覆盖会把它自己的进度冲掉。Idle 时它是权威、全局是补充。
+     */
+    LaunchedEffect(installStep, DownloadCenter.state) {
+        if (installStep !is InstallStep.Idle) return@LaunchedEffect
+        val assetName = repo.best?.name ?: return@LaunchedEffect
+        val live = DownloadCenter.state.value
+        val stillLive = when (live) {
+            is DownloadCenter.Progress.Running -> live.assetName == assetName
+            is DownloadCenter.Progress.Paused -> live.assetName == assetName
+            // 刚下完的：主按钮要能变成「确认安装」，而不是把入口留给
+            // 产物行那个打不开的绿色按钮
+            is DownloadCenter.Progress.Ready -> live.assetName == assetName
+            else -> false
+        }
+        if (stillLive) install.value = restoreStep(live, assetName)
+    }
     val scope = rememberCoroutineScope()
 
     /**
@@ -461,8 +489,15 @@ fun DetailPanel(
             IconCircleButton(FiExternal, stringResource(R.string.detail_action_open_release), onOpenRelease)
         }
 
+        // 下拉刷新；顶栏那个刷新按钮**保留**。手势适合「随手刷一下」，
+        // 按钮适合「我知道该刷、现在就刷」，两个入口各有用处，不互相取代。
+        PullToRefreshBox(
+            isRefreshing = onRefresh != null && refreshing,
+            onRefresh = { onRefresh?.invoke() },
+            modifier = Modifier.weight(1f),
+        ) {
         LazyColumn(
-            Modifier.weight(1f),
+            Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 24.dp),
         ) {
             // 标题区
@@ -926,6 +961,7 @@ fun DetailPanel(
                     }
                 }
             }
+        }
         }
 
         // 底部：唯一的主按钮 + 安装状态

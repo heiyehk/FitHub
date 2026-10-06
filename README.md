@@ -23,7 +23,7 @@ It does two things a generic browser tab cannot:
 
 ## Status
 
-Early and incomplete. Version `0.0.7`, and the following is accurate as of that release:
+Early and incomplete. Version `0.0.8`, and the following is accurate as of that release:
 
 | Area | State |
 |---|---|
@@ -35,6 +35,7 @@ Early and incomplete. Version `0.0.7`, and the following is accurate as of that 
 | Release asset classification and fit verdict | Working |
 | APK parsing via `PackageManager` | Working, on user request |
 | README rendering | Working, fetched on demand when the tab is opened |
+| Pull to refresh | Working on discovery, repository detail and the device tab. The refresh buttons stay - a gesture suits "give it a flick", a button suits "refresh it now" |
 | Repository code browsing | Working — a folder tree tab next to README. Directories load lazily and are cached for six hours; file bodies are not cached. Binary and oversized files fall back to "open on GitHub". Breadcrumb segments jump back up |
 | Fit verdict for unnamed assets | Working — an APK with no ABI in its filename is no longer "unparseable"; it is offered with the caveat, and among equally-ranked candidates `release` wins over `debug` / `unsigned` - including when both already parse as a perfect match, which is the usual case once a package has been downloaded |
 | Package-to-repository binding | Working — a bundled F-Droid index answers most lookups with no request at all; everything else is a user-confirmed candidate. FitHub's own link is fixed and cannot be unlinked or repointed |
@@ -48,7 +49,7 @@ Early and incomplete. Version `0.0.7`, and the following is accurate as of that 
 | Share | Working — system share sheet with the repo, its fit verdict for this device, and the Release URL. Text, not an image card |
 | Preferences | Working — appearance (follow system / light / dark), include prereleases, require a SHA-256 checksum before install |
 
-APKs ship with every release. Take [`FitHub-v0.0.7-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.7) — signed, R8-minified, and carrying all four ABIs. The `-debug` variant is there when you want logcat.
+APKs ship with every release. Take [`FitHub-v0.0.8-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.8) — signed, R8-minified, and carrying all four ABIs. The `-debug` variant is there when you want logcat.
 
 ## What it does
 
