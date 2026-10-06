@@ -5,7 +5,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import com.heiyehk.fithub.R
 import java.io.File
@@ -48,6 +50,29 @@ object ApkInstaller {
         } else {
             true
         }
+
+    /**
+     * 跳到「安装未知来源应用」的授权页。
+     *
+     * 这个权限没有 API 能代用户授予，只能把设置页指给用户自己点。这是 Android 的设计，
+     * 任何声称能静默绕过它的方案都不该进这个项目。
+     *
+     * 放在这里而不是各自实现，是因为**每条安装入口都得能走到它**：
+     * 详情页、[MainActivity] 的通知栏入口、以前还有一个自己漏检的路径 ——
+     * 少了权限的用户在详情页能装，从通知栏点却只弹一句 toast 然后死掉。
+     * 抽成一处之后，新增入口只要记得调它就行。
+     *
+     * 已经授权时不跳：用户点了「安装」却被甩到设置页，而那页显示的恰恰是
+     * 「已经允许」，是纯噪音。调用方自己先判 [canRequestInstall]。
+     */
+    fun openPermissionSettings(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val intent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.fromParts("package", context.packageName, null),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
+    }
 
     /**
      * 提交一个已经落到本地的 APK 给系统安装器。

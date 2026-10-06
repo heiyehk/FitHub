@@ -70,5 +70,8 @@ class LocalStore(@PublishedApi internal val dir: File, @PublishedApi internal va
 
         /** 历史足迹 */
         const val KEY_HISTORY = "history"
+
+        /** 搜索历史（关键词），上限见 [com.heiyehk.fithub.data.SearchHistoryStore.MAX_ENTRIES] */
+        const val KEY_SEARCH_HISTORY = "search-history"
     }
 }

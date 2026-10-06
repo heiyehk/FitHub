@@ -104,8 +104,11 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (!ApkInstaller.canRequestInstall(this)) {
-            // 没给「安装未知来源应用」授权时先说清楚，否则系统安装器会静默失败
+            // 没给「安装未知来源应用」授权时必须把设置页指给用户，否则系统安装器
+            // 会静默失败。原来这里只 toast 一句就 return —— 从通知栏点安装的人
+            // 被告知「没权限」，却拿不到任何能解决的入口，只能自己去系统设置里找。
             toast(getString(R.string.install_error_no_permission))
+            ApkInstaller.openPermissionSettings(this)
             return
         }
         ApkInstaller.install(this, entry.file()) { ok, message ->

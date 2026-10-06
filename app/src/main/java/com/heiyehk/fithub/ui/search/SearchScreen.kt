@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import com.heiyehk.fithub.data.Async
 import com.heiyehk.fithub.data.Person
 import com.heiyehk.fithub.data.Repo
+import com.heiyehk.fithub.data.SearchHistoryStore
 import com.heiyehk.fithub.data.Env
 import androidx.annotation.StringRes
 import androidx.compose.ui.res.stringResource
@@ -92,6 +94,7 @@ fun SearchScreen(
     onSearchPeople: suspend (String, Boolean) -> Async<List<Person>>,
 ) {
     val p = FitTheme.palette
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(SearchType.Repo) }
     var cur by remember { mutableStateOf(0) }
@@ -102,6 +105,19 @@ fun SearchScreen(
     var lastQuery by remember { mutableStateOf("") }
     var lastPeople by remember { mutableStateOf("") }
 
+    /**
+     * 最近搜索。
+     *
+     * 记的是**真正发出去的那一次请求**，不是每次按键：300ms 防抖之后才落一条，
+     * 所以「敲到一半停手」不会被记成一个用户没打算搜的词。
+     */
+    var history by remember { mutableStateOf(SearchHistoryStore.list(context)) }
+
+    fun rememberQuery(q: String) {
+        SearchHistoryStore.record(context, q)
+        history = SearchHistoryStore.list(context)
+    }
+
     // 300ms 防抖，只在查询词真的变了时才发请求
     LaunchedEffect(query, type) {
         if (query.isBlank()) return@LaunchedEffect
@@ -110,10 +126,12 @@ fun SearchScreen(
             if (query != lastQuery) {
                 lastQuery = query
                 results = onSearch(query)
+                rememberQuery(query)
             }
         } else if (query != lastPeople || people is Async.Loading) {
             lastPeople = query
             people = onSearchPeople(query, type == SearchType.Org)
+            rememberQuery(query)
         }
     }
 
@@ -241,7 +259,19 @@ fun SearchScreen(
         }
 
         if (query.isBlank()) {
-            SearchHints(onPick = { query = it })
+            // 最近搜索排在语法引导前面：搜过的人回来是要接着搜上一次那个词，
+            // 不是来学 GitHub 搜索语法的。
+            //
+            // 两块合成**一个** LazyColumn：语法引导那部分自己就是 LazyColumn，
+            // 把它单独放进 Column 会拿到无限高约束直接崩。
+            SearchEmptyState(
+                history = history,
+                onPick = { query = it },
+                onClear = {
+                    SearchHistoryStore.clear(context)
+                    history = emptyList()
+                },
+            )
         } else if (type != SearchType.Repo) {
             when (val ps = people) {
                 is Async.Loading -> LoadingBlock()
@@ -412,13 +442,74 @@ private val SYNTAX_HINTS = listOf(
     "archived:false" to R.string.search_syntax_archived,
 )
 
+/**
+ * 空查询时的整屏：最近搜索 + GitHub 搜索语法引导。
+ *
+ * 合成**一个** LazyColumn 而不是两个竖着摞：下面那块自己就是 LazyColumn，
+ * 放进 Column 会拿到无限高约束直接崩。两块必须是同一个 LazyColumn 的两个 item。
+ */
 @Composable
-private fun SearchHints(onPick: (String) -> Unit) {
+private fun SearchEmptyState(
+    history: List<String>,
+    onPick: (String) -> Unit,
+    onClear: () -> Unit,
+) {
     val p = FitTheme.palette
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 40.dp),
     ) {
+        if (history.isNotEmpty()) {
+            item(key = "history-head") {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 20.dp, end = 12.dp, top = 20.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.search_history_title),
+                        style = FitTypography.titleSmall,
+                        color = p.ink,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // 词是可能被设备上别人看到的东西（应用列表、剪贴板建议），
+                    // 所以清空必须一眼找得到，而不是塞进设置里。
+                    Text(
+                        stringResource(R.string.search_history_clear),
+                        style = FitTypography.labelLarge,
+                        color = p.ink4,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .tap { onClear() }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+            }
+            items(history, key = { "h-$it" }) { q ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .tap { onPick(q) }
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(FiSearch, null, tint = p.ink4, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(11.dp))
+                    Text(
+                        q,
+                        style = FitTypography.bodyMedium,
+                        color = p.ink2,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                HairLine(Modifier.padding(start = 46.dp))
+            }
+            item(key = "history-gap") { Spacer(Modifier.height(10.dp)) }
+        }
+
         item(key = "syntax") {
             Column(Modifier.padding(horizontal = 20.dp, vertical = 22.dp)) {
                 Text(stringResource(R.string.search_syntax_title), style = FitTypography.titleSmall, color = p.ink)

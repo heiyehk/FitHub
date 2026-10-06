@@ -1,5 +1,6 @@
 package com.heiyehk.fithub.data
 
+import android.content.Context
 import com.heiyehk.fithub.data.remote.ApiResult
 import com.heiyehk.fithub.data.remote.DiscoverSort
 import com.heiyehk.fithub.data.remote.GitHubApi
@@ -275,11 +276,35 @@ class FitRepository(val api: GitHubApi) {
     /**
      * 按包名反查候选仓库。
      *
-     * 先用完整包名搜（能命中 README 里写了包名的仓库），
-     * 搜不到再退到「包名最后一段 + in:name」（`com.schabi.newpipe` → `newpipe in:name`）。
+     * 两条路，按代价从低到高：
+     *
+     * 1. **[FdroidIndex]** 随包分发的包名 → 仓库映射，命中就是权威答案，
+     *    **1 次请求、0 次浪费**。绝大多数 F-Droid 上的应用走这条路。
+     * 2. **按名字搜** —— 完整包名搜一遍（能命中 README 里写了包名的仓库），
+     *    再退到「包名最后一段 + in:name」（`com.schabi.newpipe` → `newpipe in:name`）。
+     *
+     * 第 2 条是**猜**，所以精度只到「候选」：真正准的那一步是拿候选仓库的
+     * `build.gradle` 里的 `applicationId` 跟本机包名对上（Obtainium 的做法），
+     * 那要按候选数逐个发请求，未登录只有 60 次/小时，所以**不在这轮里默认跑**。
+     *
+     * 索引命中时索引里的仓库取不到（删了 / 改名 / 转私有）会退回第 2 条而不是
+     * 直接报「查不到」—— 索引会过期，一次取不到不等于这个包真的定位不了。
+     *
      * 返回的都只是候选，要用户确认后才写入绑定表。
      */
-    suspend fun findRepoCandidates(packageName: String): Async<List<Repo>> {
+    suspend fun findRepoCandidates(packageName: String, context: Context): Async<List<Repo>> {
+        FdroidIndex.lookup(context, packageName)?.let { full ->
+            when (val hit = api.repo(full)) {
+                is ApiResult.Ok -> return Async.Ok(
+                    value = listOf(GitHubMapper.toRepo(hit.value)),
+                    fromCache = hit.fromCache,
+                    ageMs = hit.ageMs,
+                )
+                // 索引过期或指向了私有/已删仓库：继续往下走名称搜索
+                is ApiResult.Err -> Unit
+            }
+        }
+
         val seen = LinkedHashMap<String, Repo>()
         val queries = buildList {
             add(packageName)

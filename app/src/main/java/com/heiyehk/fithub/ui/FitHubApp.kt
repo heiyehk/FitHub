@@ -160,9 +160,6 @@ class TileBoundsRegistry {    private val map = HashMap<String, Rect>()
  */
 private const val EXIT_CONFIRM_MS = 2000L
 
-/** 「我的」里那些说明页。用枚举而不是字符串，拼错就编译不过 */
-private enum class InfoPage { Privacy, License, Update }
-
 /**
  * 根宿主。
  *
@@ -212,40 +209,38 @@ fun FitHubApp() {
      */
     var libraryState by remember { mutableStateOf(ApkLibrary.list(context)) }
 
-    /** 历史足迹二级页是否打开。null = 关闭 */
-    var historyOpen by remember { mutableStateOf(false) }
+    /**
+     * 全屏页面栈。顺序即叠放顺序，最后一项在最上面。
+     *
+     * 取代原来每页一个布尔量的写法，理由见 [Page]：布尔量只说「现在开着哪几页」，
+     * 说不清「是怎么走到这儿的」，于是打开仓库详情时顺手把来源页关掉，
+     * 返回时底下什么都不剩，只能落回首页。详见 docs/bugs.md 的 BUG-08。
+     */
+    val pages = remember { mutableStateListOf<Page>() }
+
+    /** 打开一页。已经是最上面那一页就不重复压栈 */
+    fun openPage(page: Page) {
+        if (pages.lastOrNull() != page) pages.add(page)
+    }
+
+    /** 返回：弹掉最上面那一页 */
+    fun closePage() {
+        if (pages.isNotEmpty()) pages.removeAt(pages.lastIndex)
+    }
 
     /**
-     * 「我的」里那些说明页/设置页现在打开哪一页。
+     * 这一页是不是当前最上面的那一页。
      *
-     * 用 sealed 枚举而不是字符串：字符串拼错一个字就是「点了没反应」，而且
-     * 返回栈里也没法保证关的是刚才那页。
+     * 渲染时**只画栈顶那一页**，而不是「栈里每一页都画、靠代码里的先后顺序决定谁盖谁」。
+     * 后者要求「压栈顺序」和「声明顺序」永远一致 —— 两者一旦对不上，
+     * 就会出现「页面明明在栈底下，却盖住了栈顶那页」，而且这种错没有任何提示。
+     * 让叠放顺序直接从栈里读出来，就不存在对不上的可能。
      */
-    var infoPage by remember { mutableStateOf<InfoPage?>(null) }
-    var themeOpen by remember { mutableStateOf(false) }
-
-    /**
-     * 语言选择页是否打开。
-     *
-     * 和 themeOpen 一样是独立的一层，而不是并进 [infoPage]：切换语言后要
-     * `recreate()`，页面状态在重建后本来就作废，不需要枚举。
-     */
-    var langOpen by remember { mutableStateOf(false) }
-
-    /** 下载源选择。和 langOpen 一样是独立一层，不并进 InfoPage 枚举 */
-    var mirrorOpen by remember { mutableStateOf(false) }
-
-    /** 下载与安装记录。focus 决定哪一节排最前（两个入口指向同一份数据） */
-    var recordsOpen by remember { mutableStateOf(false) }
-    var recordsFocus by remember { mutableStateOf<HistoryEntry.Kind?>(null) }
-
-    /** WebDAV 配置页是否打开 */
-    var webDavOpen by remember { mutableStateOf(false) }
+    fun isTop(page: Page): Boolean = pages.lastOrNull() == page
 
     /** 首页板块配置与它的管理页 */
     val sectionStore = remember { HomeSectionStore(context) }
     var homeSections by remember { mutableStateOf(sectionStore.load()) }
-    var sectionManagerOpen by remember { mutableStateOf(false) }
     val sectionManagerState = rememberLazyListState()
     var webDavConfig by remember { mutableStateOf(WebDavConfig.load(context)) }
     var webDavSyncing by remember { mutableStateOf(false) }
@@ -298,10 +293,15 @@ fun FitHubApp() {
      * 一旦资源化成随语言变化的文案，比较就会和 HomeScreen 里的常量对不上。 */
     var langFilter by remember { mutableStateOf(ALL_LANGS) }
     var message by remember { mutableStateOf<String?>(null) }
-    var searching by remember { mutableStateOf(false) }
-    var personLogin by remember { mutableStateOf<String?>(null) }
-    var personProfile by remember { mutableStateOf<Async<UserDto>>(Async.Loading) }
-    var personRepos by remember { mutableStateOf<Async<List<Repo>>>(Async.Loading) }
+    /**
+     * 主体页的资料与仓库列表，**按 login 分桶**。
+     *
+     * 之前是两个全局变量，于是「打开 A 的主体页 → 进仓库详情 → 返回」这条路走不通，
+     * 而且切到另一个人时前一个人的数据会闪一下。现在一份数据跟着 [Page.Person.login] 走，
+     * 返回时还是同一个人那份。
+     */
+    val personProfile = remember { mutableStateMapOf<String, Async<UserDto>>() }
+    val personRepos = remember { mutableStateMapOf<String, Async<List<Repo>>>() }
     val installable = remember { mutableStateMapOf<String, InstallCheck>() }
     var scan by remember { mutableStateOf<ScanResult?>(null) }
     /** 扫描进行中（后台那次也算）。用来把「重新扫描」按成不可连点 */
@@ -327,7 +327,6 @@ fun FitHubApp() {
 
     /** 登录态。token 本身在 TokenStore（Keystore 加密），这里只缓存给人看的资料 */
     var me by remember { mutableStateOf<UserDto?>(null) }
-    var loginOpen by remember { mutableStateOf(false) }
 
     /**
      * 自己的仓库 + star / fork / watch 汇总。
@@ -340,7 +339,6 @@ fun FitHubApp() {
      * 未登录时压根不显示这一块（`/user/repos` 没有 token 会 404）。
      */
     var myRepos by remember { mutableStateOf<Async<MyRepos>?>(null) }
-    var myProjectsOpen by remember { mutableStateOf(false) }
 
     /**
      * 关注列表。落盘在 filesDir，服务器上没有对应记录。
@@ -370,7 +368,7 @@ fun FitHubApp() {
         val conf = webDavConfig
         if (!conf.enabled || conf.isBlank) {
             lastSyncOutcome = SyncOutcome.NotConfigured(Explain.of(R.string.sync_not_configured_reason))
-            webDavOpen = true
+            openPage(Page.WebDav)
             return
         }
         if (webDavSyncing) return
@@ -665,7 +663,10 @@ fun FitHubApp() {
      * 搜索结果存在 SearchScreen 内部、够不着，那条路径靠调用方传 placeholder 兜底。
      */
     fun byId(fullName: String): Repo? {
-        val sources: List<Async<List<Repo>>> = listOf(stars, updated, featured, personRepos)
+        // personRepos 现在是 Map<login, 列表>（一个主体页的数据跟着 login 走，
+        // 主体页在栈上待着期间不能丢），所以这里要把所有桶都看一遍。
+        val sources: List<Async<List<Repo>>> =
+            listOf(stars, updated, featured) + personRepos.values.toList()
         for (s in sources) {
             val list = (s as? Async.Ok<List<Repo>>)?.value ?: continue
             list.firstOrNull { it.id == fullName }?.let { return it }
@@ -1006,21 +1007,28 @@ fun FitHubApp() {
         active = active?.withDownloadedFacts(libraryState)
     }
 
-    /** 打开用户 / 组织页：先拿 profile（决定是 user 还是 org），再按类型取仓库列表 */
+    /**
+     * 打开用户 / 组织页：先拿 profile（决定是 user 还是 org），再按类型取仓库列表。
+     *
+     * 页面本身压进 [pages] 栈 —— 从这里点进仓库详情时**不再把这一页关掉**，
+     * 返回才回得来（这正是 BUG-08）。
+     */
     fun openPerson(login: String) {
-        if (personLogin == login) return
-        personLogin = login
-        personProfile = Async.Loading
-        personRepos = Async.Loading
+        openPage(Page.Person(login))
+        // 已经开着这一页就别从头再拉一遍 —— **除非上次拉失败了**。
+        // 「重试」按的就是这里，静默 return 会让那个按钮彻底没用：点一下什么也不发生。
+        if (personProfile[login] != null && personProfile[login] !is Async.Err) return
+        personProfile[login] = Async.Loading
+        personRepos[login] = Async.Loading
         scope.launch {
             when (val u = repo.person(login)) {
                 is Async.Ok -> {
-                    personProfile = u
-                    personRepos = repo.personRepos(login, u.value.type == "Organization")
+                    personProfile[login] = u
+                    personRepos[login] = repo.personRepos(login, u.value.type == "Organization")
                 }
                 is Async.Err -> {
-                    personProfile = u
-                    personRepos = Async.Err(u.message)
+                    personProfile[login] = u
+                    personRepos[login] = Async.Err(u.message)
                 }
                 Async.Loading -> Unit
             }
@@ -1065,7 +1073,7 @@ fun FitHubApp() {
         lookupCandidates = emptyList()
         lookupFailed = false
         scope.launch {
-            when (val r = repo.findRepoCandidates(app.packageName)) {
+            when (val r = repo.findRepoCandidates(app.packageName, context)) {
                 is Async.Ok -> {
                     lookupCandidates = r.value
                     if (r.value.isEmpty()) {
@@ -1120,6 +1128,10 @@ fun FitHubApp() {
      * [quiet] 给「换仓库」用：那条链路紧接着就要弹反查结果，再补一句 toast 是噪音。
      */
     fun unbind(app: ScannedApp, quiet: Boolean = false) {
+        // 内置绑定不可拆。必须在**这里**就返回，不能只靠 LinkEngine 拒写 ——
+        // 那样的话下面这些照样执行：内存绑定被摘掉、界面上弹出「已解除」，
+        // 而落盘表里那条还在。用户看到的是一个并没有真的解除的状态。
+        if (LinkEngine.isBuiltIn(app.packageName)) return
         LinkEngine.unbind(context, app.packageName)
         linkBindings.remove(app.packageName)
         // 正在反查的同一个包要收尾，否则解除后还挂着上一轮的候选
@@ -1164,33 +1176,27 @@ fun FitHubApp() {
      * 全局返回栈。
      *
      * 这个 App 是单 Activity + 一叠 overlay，没有 NavHost，返回键只能自己按
-     * 「谁在最上层」逐层关。之前**只有** DetailPanel 注册了一个 handler，搜索、
-     * 人物页、历史足迹、WebDAV、板块管理全都没有 —— 所以在「历史足迹」里按返回
-     * 会直接把 Activity 关掉，回不到「我的」，这就是那个 bug。
+     * 「谁在最上面」逐层退。
      *
-     * 顺序 = 叠放顺序的逆序（⑨ WebDAV / 板块管理最上）。
-     * 用 personLogin 而不是 person：人物资料还在拉的时候 person 是 null，
-     * 但那一层已经占着返回键了，得照样能退出去。
+     * 顺序 = 视觉叠放顺序的逆序：
+     *
+     * 1. **仓库详情**（它渲染在所有页面之上，不在 [pages] 栈里）
+     * 2. **页面栈** [pages] 的栈顶
+     * 3. 主 tab 回发现页
+     * 4. 退出确认
+     *
+     * 第 1 条必须在第 2 条之前 —— 从搜索结果点进仓库详情时，搜索页**没有被关掉**，
+     * 它就压在栈里等着。于是「返回」先关详情、再露回搜索页，而不是一步跨到首页。
+     *
+     * DetailPanel 自己也有 BackHandler（组合更晚、会先命中），这里的 `mounted -> close()`
+     * 是兜底：面板淡出到 alpha≈0 时它会提前 return，那时就没注册了，返回键会漏下来。
      */
     var lastBackAt by remember { mutableStateOf(0L) }
     val backActivity = LocalContext.current as? Activity
     BackHandler {
         when {
-            sectionManagerOpen -> sectionManagerOpen = false
-            webDavOpen -> webDavOpen = false
-            historyOpen -> historyOpen = false
-            recordsOpen -> recordsOpen = false
-            langOpen -> langOpen = false
-            mirrorOpen -> mirrorOpen = false
-            themeOpen -> themeOpen = false
-            loginOpen -> loginOpen = false
-            infoPage != null -> infoPage = null
-            myProjectsOpen -> myProjectsOpen = false
-            personLogin != null -> personLogin = null
-            searching -> searching = false
-            // DetailPanel 自己也有 BackHandler（组合更晚、会先命中）。这里留着兜底：
-            // 面板淡出到 alpha≈0 时会提前 return，那时它就没注册了，返回键会漏下来。
             mounted -> close()
+            pages.isNotEmpty() -> closePage()
             tab != AppTab.Discover -> tab = AppTab.Discover
             else -> {
                 // 已经在首页。直接退出会「啪」一下回桌面，很像闪退，
@@ -1255,13 +1261,13 @@ fun FitHubApp() {
                     },
                     rateRemaining = rate.first,
                     rateLimit = rate.second,
-                    onSearchTap = { searching = true },
+                    onSearchTap = { openPage(Page.Search) },
                     onTileBounds = { id, rect -> bounds.record(id, rect) },
                     onRetry = { loadDiscover() },
                     upgradable = upgradableCount,
                     featured = featured,
                     onRefresh = { refreshDiscover() },
-                    onSectionTap = { sectionManagerOpen = true },
+                    onSectionTap = { openPage(Page.SectionManager) },
                     sections = homeSections,
                     topicStates = topicStates,
                     onSectionLoad = { loadTopicSection(it) },
@@ -1314,7 +1320,7 @@ fun FitHubApp() {
                             ?: stringResource(R.string.sync_state_custom)
                     },
                     versionName = BuildConfig.VERSION_NAME,
-                    onLogin = { loginOpen = true },
+                    onLogin = { openPage(Page.Login) },
                     loggedIn = TokenStore.isLoggedIn(context),
                     loginName = me?.name?.takeIf { it.isNotBlank() } ?: me?.login,
                     me = me,
@@ -1324,6 +1330,10 @@ fun FitHubApp() {
                         // 进页面前先确保有数据：直接开的话会先看到骨架屏，
                         // 而多数账号是 1 次请求就能拿到，没必要让用户多等一轮。
                         loadMyRepos()
+                        // 必须开这一页。只 loadMyRepos() 的话整个回调只刷新了数据、
+                        // 没有任何一层被打开，「我的项目」那 265 行就是不可达代码 ——
+                        // 表现正是「点了没反应」。
+                        openPage(Page.MyProjects)
                     },
                     onLogout = {
                         TokenStore.logoutOnly(context)
@@ -1331,7 +1341,7 @@ fun FitHubApp() {
                         // 汇总数字必须一起清：留着上一个账号的 star 数，
                         // 会在「未登录」的状态下显示别人的数据
                         myRepos = null
-                        myProjectsOpen = false
+                        pages.removeAll { it == Page.MyProjects }
                         // 配额立刻重读：请求头已经不带 token 了，读回来就是 60/h 的真实值
                         scope.launch { rate = repo.rate() }
                         toast(
@@ -1344,19 +1354,16 @@ fun FitHubApp() {
                             "我的订阅" -> tab = AppTab.Subscribe
                             "导出订阅" -> openExport.launch(SubscriptionTransfer.suggestedFileName())
                             "导入订阅" -> importFromClipboardOrPicker()
-                            "历史足迹" -> historyOpen = true
-                            "订阅同步" -> webDavOpen = true
-                            "下载与安装记录" -> { recordsFocus = HistoryEntry.Kind.Downloaded; recordsOpen = true }
-                            "从 FitHub 安装的应用" -> {
-                                recordsFocus = HistoryEntry.Kind.InstalledViaUs
-                                recordsOpen = true
-                            }
-                            "外观" -> themeOpen = true
-                            "语言" -> langOpen = true
-                            "下载源" -> mirrorOpen = true
-                            "隐私" -> infoPage = InfoPage.Privacy
-                            "开源协议" -> infoPage = InfoPage.License
-                            "检查更新" -> infoPage = InfoPage.Update
+                            "历史足迹" -> openPage(Page.History)
+                            "订阅同步" -> openPage(Page.WebDav)
+                            "下载与安装记录" -> openPage(Page.Records(HistoryEntry.Kind.Downloaded))
+                            "从 FitHub 安装的应用" -> openPage(Page.Records(HistoryEntry.Kind.InstalledViaUs))
+                            "外观" -> openPage(Page.Theme)
+                            "语言" -> openPage(Page.Language)
+                            "下载源" -> openPage(Page.Mirror)
+                            "隐私" -> openPage(Page.Privacy)
+                            "开源协议" -> openPage(Page.License)
+                            "检查更新" -> openPage(Page.Update)
 
                             "预发布" -> {
                                 val next = !Prefs.state.value.includePrerelease
@@ -1392,7 +1399,352 @@ fun FitHubApp() {
             }
         }
 
-        /* ② 详情遮罩 */
+        /* ⑤ 悬浮 tab bar：详情打开时整条淡出 */
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = bottomInset + 16.dp)
+                .padding(horizontal = 16.dp),
+        ) {
+            FloatingTabBar(
+                selected = tab,
+                onSelect = { tab = it },
+                hidden = mounted,
+            )
+        }
+
+        /* ⑥ 全屏搜索 */
+        AnimatedVisibility(
+            visible = isTop(Page.Search),
+            enter = slideInHorizontally(tween(300)) { it / 3 } + fadeIn(tween(200)),
+            exit = slideOutHorizontally(tween(260)) { it / 3 } + fadeOut(tween(180)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            SearchScreen(
+                onClose = { closePage() },
+                // 进详情时**不关搜索页**：它留在栈里，返回时才回得来，
+                // 而且搜索结果和滚动位置都原样保留（页面没被销毁重建）。
+                onRepoTap = { open(it.id, placeholder = it) },
+                onPersonTap = { handle ->
+                    closePage()
+                    if (handle.startsWith("agent:")) {
+                        toast(context.getString(R.string.toast_not_github_account))
+                    } else {
+                        openPerson(handle)
+                    }
+                },
+                onSearch = { q -> repo.search(q) },
+                onSearchPeople = { q, wantOrg -> repo.searchPeople(q, wantOrg) },
+            )
+        }
+
+        /* ⑦ 用户 / 组织页 */
+        val person = (pages.lastOrNull() as? Page.Person)?.login
+        if (person != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                PersonScreen(
+                    login = person,
+                    profile = personProfile[person] ?: Async.Loading,
+                    repos = personRepos[person] ?: Async.Loading,
+                    installable = installable,
+                    onCheck = { checkInstallable(it) },
+                    onCheckAll = { checkAllInstallable(it) },
+                    // 同上：不关这一页，返回才回得来
+                    onRepoTap = { open(it.id, placeholder = it) },
+                    onBack = { closePage() },
+                    onRetry = { openPerson(person) },
+                )
+            }
+        }
+
+        /* ⑦a 我的项目页 */
+        if (isTop(Page.MyProjects)) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                MyProjectsScreen(
+                    me = me,
+                    data = myRepos ?: Async.Loading,
+                    installable = installable,
+                    grantedScopes = api.grantedScopes,
+                    avatarLoader = { url -> api.avatar(url) },
+                    onCheck = { checkInstallable(it) },
+                    onCheckAll = { checkAllInstallable(it) },
+                    // 同上：不关这一页，「我的 → 我的项目 → 仓库 → 返回」才回得来
+                    onRepoTap = { open(it.id, placeholder = it) },
+                    onRefresh = { loadMyRepos(force = true) },
+                    onBack = { closePage() },
+                )
+            }
+        }
+
+        /* ⑧ 历史足迹 */
+        if (isTop(Page.History)) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                HistoryScreen(
+                    entries = history,
+                    onBack = { closePage() },
+                    onClearOne = { e ->
+                        scope.launch {
+                            withContext(Dispatchers.IO) { HistoryStore.clear(context, e.kind, e.ref) }
+                            history = HistoryStore.list(context)
+                        }
+                    },
+                    onClearAll = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { HistoryStore.clearAll(context) }
+                            history = emptyList()
+                            toast(context.getString(R.string.toast_history_cleared))
+                        }
+                    },
+                    listState = historyState,
+                )
+            }
+        }
+
+        /* ⑧a 下载与安装记录。焦点跟着这一页走：两个入口指向同一份数据但起点不同 */
+        val recordsPage = pages.lastOrNull() as? Page.Records
+        if (recordsPage != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                RecordsScreen(
+                    entries = history,
+                    focus = recordsPage.focus,
+                    /**
+                     * 已下载清单在这一页不只是给人看的，还要**能用**。
+                     *
+                     * 之前「下载与安装记录」里的每一行都只是文字：下好的包躺在
+                     * 下载目录里，用户要么自己切出去找文件，要么回详情页重新点一遍。
+                     */
+                    library = libraryState,
+                    onBack = { closePage() },
+                    onClearOne = { e ->
+                        scope.launch {
+                            withContext(Dispatchers.IO) { HistoryStore.clear(context, e.kind, e.ref) }
+                            history = HistoryStore.list(context)
+                        }
+                    },
+                    onClearAll = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { HistoryStore.clearAll(context) }
+                            history = emptyList()
+                            toast(context.getString(R.string.toast_records_cleared))
+                        }
+                    },
+                    onNotifyChanged = { libraryState = ApkLibrary.list(context) },
+                )
+            }
+        }
+
+        /* ⑧b 外观 */
+        if (isTop(Page.Theme)) {            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                ThemeScreen(
+                    onBack = { closePage() },
+                    onPick = {
+                        Prefs.setTheme(context, it)
+                        closePage()
+                    },
+                )
+            }
+        }
+
+        /* ⑧b1b 语言 */
+        if (isTop(Page.Language)) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                LanguageScreen(
+                    onBack = { closePage() },
+                    onPick = { pref ->
+                        // 写完偏好必须重建：资源由 attachBaseContext 包装的 context 提供，
+                        // 不 recreate() 的话这一层还拿着旧 locale。
+                        AppLocale.set(context, pref)
+                        backActivity?.recreate()
+                    },
+                )
+            }
+        }
+
+        /* ⑧b1c 下载源 */
+        if (isTop(Page.Mirror)) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                MirrorScreen(onBack = { closePage() })
+            }
+        }
+
+        /* ⑧b2 GitHub 登录 */
+        if (isTop(Page.Login)) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                LoginScreen(
+                    onBack = { closePage() },
+                    client = remember { DeviceFlowClient(BuildConfig.GITHUB_CLIENT_ID) },
+                    onToken = { token ->
+                        TokenStore.save(context, token)
+                        // 登录改变了配额和可见数据，作废发现页缓存重拉
+                        repo.invalidateDiscover()
+                        scope.launch {
+                            rate = repo.rate()
+                            loadDiscover()
+                        }
+                    },
+                    onResolveLogin = {
+                        // 查用户名只为显示。查不到就返回 null，**不要**因此报「登录失败」——
+                        // 令牌已经换到手了，那就是登录成功。
+                        when (val r = api.me()) {
+                            is ApiResult.Ok -> {
+                                me = r.value
+                                // 登录那一刻就把 star/fork/watch 拉上：
+                                // 登录完回到「我的」页就要看到数字，
+                                // 而不是先看到三个破折号再等它自己冒出来。
+                                loadMyRepos()
+                                r.value.name?.takeIf { it.isNotBlank() } ?: r.value.login
+                            }
+                            else -> null
+                        }
+                    },
+                    onOpenUrl = { url -> openExternal(context, url) },
+                )
+            }
+        }
+
+        /* ⑧c 隐私 / 开源协议 / 检查更新 —— 三个都是平级页面，栈顶是谁就渲染谁 */
+        when (pages.lastOrNull()) {
+            Page.Privacy -> Box(Modifier.fillMaxSize().background(p.surface)) {
+                PrivacyScreen(onBack = { closePage() })
+            }
+
+            Page.License -> Box(Modifier.fillMaxSize().background(p.surface)) {
+                LicenseScreen(onBack = { closePage() })
+            }
+
+            Page.Update -> Box(Modifier.fillMaxSize().background(p.surface)) {
+                UpdateScreen(
+                    onBack = { closePage() },
+                    repo = repo,
+                    onToast = { msg, note -> toast(msg, note) },
+                )
+            }
+
+            else -> Unit
+        }
+
+        /* ⑨ WebDAV 配置 */
+        if (isTop(Page.WebDav)) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                WebDavScreen(
+                    saved = webDavConfig,
+                    subscriptionCount = subscriptions.size,
+                    lastOutcome = lastSyncOutcome,
+                    syncing = webDavSyncing,
+                    onBack = { closePage() },
+                    onSave = {
+                        webDavConfig = it
+                        WebDavConfig.save(context, it)
+                        toast(
+                            context.getString(R.string.toast_webdav_saved),
+                            context.getString(R.string.toast_webdav_saved_note, it.baseUrl),
+                        )
+                    },
+                    onSync = { runSync(false) },
+                    onForcePush = { runSync(true) },
+                    onTest = {
+                        scope.launch {
+                            val r = WebDavClient(webDavConfig).probe()
+                            toast(
+                                when (r) {
+                                    is com.heiyehk.fithub.data.remote.WebDavResult.Ok ->
+                                        context.getString(R.string.webdav_probe_ok)
+                                    is com.heiyehk.fithub.data.remote.WebDavResult.Failed ->
+                                        context.getString(R.string.webdav_probe_failed)
+                                    is com.heiyehk.fithub.data.remote.WebDavResult.NotConfigured ->
+                                        context.getString(R.string.webdav_probe_not_configured)
+                                    com.heiyehk.fithub.data.remote.WebDavResult.NotFound ->
+                                        context.getString(R.string.webdav_probe_not_found)
+                                },
+                                when (r) {
+                                    is com.heiyehk.fithub.data.remote.WebDavResult.Failed ->
+                                        explainText(context, r.reason)
+                                    is com.heiyehk.fithub.data.remote.WebDavResult.NotConfigured ->
+                                        explainText(context, r.reason)
+                                    else -> null
+                                },
+                            )
+                        }
+                    },
+                    listState = webDavState,
+                )
+            }
+        }
+
+        /* ⑩ 首页板块管理 */
+        if (isTop(Page.SectionManager)) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.surface),
+            ) {
+                HomeSectionManager(
+                    sections = homeSections,
+                    onBack = { closePage() },
+                    onChange = {
+                        homeSections = it
+                        sectionStore.save(it)
+                        // 新加的板块立刻用已有缓存填上：用户加完板块回首页，
+                        // 看到的是内容而不是一个还得再点一次的按钮（不花配额）
+                        hydrateTopicSectionsFromCache(it)
+                        toast(
+                            context.getString(R.string.toast_saved),
+                            context.getString(R.string.toast_saved_note),
+                        )
+                    },
+                    listState = sectionManagerState,
+                )
+            }
+        }
+
+        /*
+         * ↓↓↓ 详情遮罩 / 详情面板 / 共享图标 ↓↓↓
+         *
+         * 这三块刻意排在**所有页面之下**（也就是视觉上的最上层）。
+         *
+         * 从搜索结果或主体页进仓库详情时，那些页面现在**不会被关掉**（见 [Page]），
+         * 它们还留在栈里等着被返回。而这个 Box 里后面的兄弟节点总是画在更上面 ——
+         * 详情要是还留在原来那个位置，就会被搜索页整块盖住，用户点了仓库之后
+         * 看到的还是上一页。
+         */
+
+        /* 详情遮罩 */
         if (mounted) {
             Box(
                 Modifier
@@ -1403,7 +1755,7 @@ fun FitHubApp() {
             )
         }
 
-        /* ③ 详情面板：从右侧滑入 */
+        /* 详情面板：从右侧滑入 */
         if (mounted) {
             active?.let { repo ->
                 Box(
@@ -1476,7 +1828,7 @@ fun FitHubApp() {
             }
         }
 
-        /* ④ 共享图标 */
+        /* 共享图标：从列表卡片飞进详情页的那一下 */
         val from = source
         if (mounted && from != null && from.width > 0f && active != null) {
             val repo = active!!
@@ -1500,340 +1852,6 @@ fun FitHubApp() {
                     foreground = repo.tileFg,
                     size = baseSize,
                     corner = with(density) { (from.width * 0.3f).toDp() },
-                )
-            }
-        }
-
-        /* ⑤ 悬浮 tab bar：详情打开时整条淡出 */
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = bottomInset + 16.dp)
-                .padding(horizontal = 16.dp),
-        ) {
-            FloatingTabBar(
-                selected = tab,
-                onSelect = { tab = it },
-                hidden = mounted,
-            )
-        }
-
-        /* ⑥ 全屏搜索 */
-        AnimatedVisibility(
-            visible = searching,
-            enter = slideInHorizontally(tween(300)) { it / 3 } + fadeIn(tween(200)),
-            exit = slideOutHorizontally(tween(260)) { it / 3 } + fadeOut(tween(180)),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            SearchScreen(
-                onClose = { searching = false },
-                onRepoTap = { searching = false; open(it.id, placeholder = it) },
-                onPersonTap = { handle ->
-                    searching = false
-                    if (handle.startsWith("agent:")) {
-                        toast(context.getString(R.string.toast_not_github_account))
-                    } else {
-                        openPerson(handle)
-                    }
-                },
-                onSearch = { q -> repo.search(q) },
-                onSearchPeople = { q, wantOrg -> repo.searchPeople(q, wantOrg) },
-            )
-        }
-
-        /* ⑦ 用户 / 组织页 */
-        val person = personLogin
-        if (person != null) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                PersonScreen(
-                    login = person,
-                    profile = personProfile,
-                    repos = personRepos,
-                    installable = installable,
-                    onCheck = { checkInstallable(it) },
-                    onCheckAll = { checkAllInstallable(it) },
-                    onRepoTap = {
-                        personLogin = null
-                        open(it.id, placeholder = it)
-                    },
-                    onBack = { personLogin = null },
-                )
-            }
-        }
-
-        /* ⑦a 我的项目页 */
-        if (myProjectsOpen) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                MyProjectsScreen(
-                    me = me,
-                    data = myRepos ?: Async.Loading,
-                    installable = installable,
-                    grantedScopes = api.grantedScopes,
-                    avatarLoader = { url -> api.avatar(url) },
-                    onCheck = { checkInstallable(it) },
-                    onCheckAll = { checkAllInstallable(it) },
-                    onRepoTap = {
-                        myProjectsOpen = false
-                        open(it.id, placeholder = it)
-                    },
-                    onRefresh = { loadMyRepos(force = true) },
-                    onBack = { myProjectsOpen = false },
-                )
-            }
-        }
-
-        /* ⑧ 历史足迹 */
-        if (historyOpen) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                HistoryScreen(
-                    entries = history,
-                    onBack = { historyOpen = false },
-                    onClearOne = { e ->
-                        scope.launch {
-                            withContext(Dispatchers.IO) { HistoryStore.clear(context, e.kind, e.ref) }
-                            history = HistoryStore.list(context)
-                        }
-                    },
-                    onClearAll = {
-                        scope.launch {
-                            withContext(Dispatchers.IO) { HistoryStore.clearAll(context) }
-                            history = emptyList()
-                            toast(context.getString(R.string.toast_history_cleared))
-                        }
-                    },
-                    listState = historyState,
-                )
-            }
-        }
-
-        /* ⑧a 下载与安装记录 */
-        if (recordsOpen) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                RecordsScreen(
-                    entries = history,
-                    focus = recordsFocus,
-                    /**
-                     * 已下载清单在这一页不只是给人看的，还要**能用**。
-                     *
-                     * 之前「下载与安装记录」里的每一行都只是文字：下好的包躺在
-                     * 下载目录里，用户要么自己切出去找文件，要么回详情页重新点一遍。
-                     */
-                    library = libraryState,
-                    onBack = { recordsOpen = false },
-                    onClearOne = { e ->
-                        scope.launch {
-                            withContext(Dispatchers.IO) { HistoryStore.clear(context, e.kind, e.ref) }
-                            history = HistoryStore.list(context)
-                        }
-                    },
-                    onClearAll = {
-                        scope.launch {
-                            withContext(Dispatchers.IO) { HistoryStore.clearAll(context) }
-                            history = emptyList()
-                            toast(context.getString(R.string.toast_records_cleared))
-                        }
-                    },
-                    onNotifyChanged = { libraryState = ApkLibrary.list(context) },
-                )
-            }
-        }
-
-        /* ⑧b 外观 */
-        if (themeOpen) {            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                ThemeScreen(
-                    onBack = { themeOpen = false },
-                    onPick = {
-                        Prefs.setTheme(context, it)
-                        themeOpen = false
-                    },
-                )
-            }
-        }
-
-        /* ⑧b1b 语言 */
-        if (langOpen) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                LanguageScreen(
-                    onBack = { langOpen = false },
-                    onPick = { pref ->
-                        // 写完偏好必须重建：资源由 attachBaseContext 包装的 context 提供，
-                        // 不 recreate() 的话这一层还拿着旧 locale。
-                        AppLocale.set(context, pref)
-                        backActivity?.recreate()
-                    },
-                )
-            }
-        }
-
-        /* ⑧b1c 下载源 */
-        if (mirrorOpen) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                MirrorScreen(onBack = { mirrorOpen = false })
-            }
-        }
-
-        /* ⑧b2 GitHub 登录 */
-        if (loginOpen) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                LoginScreen(
-                    onBack = { loginOpen = false },
-                    client = remember { DeviceFlowClient(BuildConfig.GITHUB_CLIENT_ID) },
-                    onToken = { token ->
-                        TokenStore.save(context, token)
-                        // 登录改变了配额和可见数据，作废发现页缓存重拉
-                        repo.invalidateDiscover()
-                        scope.launch {
-                            rate = repo.rate()
-                            loadDiscover()
-                        }
-                    },
-                    onResolveLogin = {
-                        // 查用户名只为显示。查不到就返回 null，**不要**因此报「登录失败」——
-                        // 令牌已经换到手了，那就是登录成功。
-                        when (val r = api.me()) {
-                            is ApiResult.Ok -> {
-                                me = r.value
-                                // 登录那一刻就把 star/fork/watch 拉上：
-                                // 登录完回到「我的」页就要看到数字，
-                                // 而不是先看到三个破折号再等它自己冒出来。
-                                loadMyRepos()
-                                r.value.name?.takeIf { it.isNotBlank() } ?: r.value.login
-                            }
-                            else -> null
-                        }
-                    },
-                    onOpenUrl = { url -> openExternal(context, url) },
-                )
-            }
-        }
-
-        /* ⑧c 隐私 / 开源协议 / 检查更新 */
-        when (infoPage) {
-            InfoPage.Privacy -> Box(Modifier.fillMaxSize().background(p.surface)) {
-                PrivacyScreen(onBack = { infoPage = null })
-            }
-
-            InfoPage.License -> Box(Modifier.fillMaxSize().background(p.surface)) {
-                LicenseScreen(onBack = { infoPage = null })
-            }
-
-            InfoPage.Update -> Box(Modifier.fillMaxSize().background(p.surface)) {
-                UpdateScreen(
-                    onBack = { infoPage = null },
-                    repo = repo,
-                    onToast = { msg, note -> toast(msg, note) },
-                )
-            }
-
-            null -> Unit
-        }
-
-        /* ⑨ WebDAV 配置 */
-        if (webDavOpen) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                WebDavScreen(
-                    saved = webDavConfig,
-                    subscriptionCount = subscriptions.size,
-                    lastOutcome = lastSyncOutcome,
-                    syncing = webDavSyncing,
-                    onBack = { webDavOpen = false },
-                    onSave = {
-                        webDavConfig = it
-                        WebDavConfig.save(context, it)
-                        toast(
-                            context.getString(R.string.toast_webdav_saved),
-                            context.getString(R.string.toast_webdav_saved_note, it.baseUrl),
-                        )
-                    },
-                    onSync = { runSync(false) },
-                    onForcePush = { runSync(true) },
-                    onTest = {
-                        scope.launch {
-                            val r = WebDavClient(webDavConfig).probe()
-                            toast(
-                                when (r) {
-                                    is com.heiyehk.fithub.data.remote.WebDavResult.Ok ->
-                                        context.getString(R.string.webdav_probe_ok)
-                                    is com.heiyehk.fithub.data.remote.WebDavResult.Failed ->
-                                        context.getString(R.string.webdav_probe_failed)
-                                    is com.heiyehk.fithub.data.remote.WebDavResult.NotConfigured ->
-                                        context.getString(R.string.webdav_probe_not_configured)
-                                    com.heiyehk.fithub.data.remote.WebDavResult.NotFound ->
-                                        context.getString(R.string.webdav_probe_not_found)
-                                },
-                                when (r) {
-                                    is com.heiyehk.fithub.data.remote.WebDavResult.Failed ->
-                                        explainText(context, r.reason)
-                                    is com.heiyehk.fithub.data.remote.WebDavResult.NotConfigured ->
-                                        explainText(context, r.reason)
-                                    else -> null
-                                },
-                            )
-                        }
-                    },
-                    listState = webDavState,
-                )
-            }
-        }
-
-        /* ⑩ 首页板块管理 */
-        if (sectionManagerOpen) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(p.surface),
-            ) {
-                HomeSectionManager(
-                    sections = homeSections,
-                    onBack = { sectionManagerOpen = false },
-                    onChange = {
-                        homeSections = it
-                        sectionStore.save(it)
-                        // 新加的板块立刻用已有缓存填上：用户加完板块回首页，
-                        // 看到的是内容而不是一个还得再点一次的按钮（不花配额）
-                        hydrateTopicSectionsFromCache(it)
-                        toast(
-                            context.getString(R.string.toast_saved),
-                            context.getString(R.string.toast_saved_note),
-                        )
-                    },
-                    listState = sectionManagerState,
                 )
             }
         }

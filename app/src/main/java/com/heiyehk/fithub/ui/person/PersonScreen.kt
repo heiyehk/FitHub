@@ -69,6 +69,14 @@ fun PersonScreen(
     onCheckAll: (List<Repo>) -> Unit,
     onRepoTap: (Repo) -> Unit,
     onBack: () -> Unit,
+    /**
+     * 资料拉取失败时的「重试」。
+     *
+     * 单独一个参数而不是复用 [onBack]：原来这个按钮接的是 `onBack`，
+     * 于是**写着「重试」按下去却是关掉整页** —— 用户被送回首页，
+     * 而那正是他点这个按钮时最不想要的结果。重试就是重试。
+     */
+    onRetry: () -> Unit = onBack,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
 ) {
@@ -101,7 +109,7 @@ fun PersonScreen(
             is Async.Err -> Column(Modifier.padding(24.dp)) {
                 Text(prof.message, style = FitTypography.bodyMedium, color = p.ink2)
                 Spacer(Modifier.height(12.dp))
-                GhostButton(stringResource(R.string.person_retry), onBack)
+                GhostButton(stringResource(R.string.person_retry), onRetry)
             }
 
             is Async.Ok -> LazyColumn(

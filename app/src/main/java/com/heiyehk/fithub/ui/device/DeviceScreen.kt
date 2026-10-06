@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.heiyehk.fithub.data.DeviceState
 import com.heiyehk.fithub.data.Env
 import com.heiyehk.fithub.data.FitEngine
+import com.heiyehk.fithub.data.LinkEngine
 import com.heiyehk.fithub.data.Repo
 import com.heiyehk.fithub.data.ScanResult
 import com.heiyehk.fithub.data.ScannedApp
@@ -313,6 +314,7 @@ fun DeviceScreen(
                         onUnbindClick = { onUnbindClick(app) },
                         onUnbindCancel = { unbindArmed = null },
                         onRelink = { onRelink(app) },
+                        fixed = LinkEngine.isBuiltIn(app.packageName),
                     )
                 }
             }
@@ -338,6 +340,7 @@ fun DeviceScreen(
                         onUnbindClick = { onUnbindClick(app) },
                         onUnbindCancel = { unbindArmed = null },
                         onRelink = { onRelink(app) },
+                        fixed = LinkEngine.isBuiltIn(app.packageName),
                     )
                 }
             }
@@ -363,6 +366,7 @@ fun DeviceScreen(
                         onUnbindClick = { onUnbindClick(app) },
                         onUnbindCancel = { unbindArmed = null },
                         onRelink = { onRelink(app) },
+                        fixed = LinkEngine.isBuiltIn(app.packageName),
                     )
                 }
             }
@@ -388,6 +392,7 @@ fun DeviceScreen(
                         onUnbindClick = { onUnbindClick(app) },
                         onUnbindCancel = { unbindArmed = null },
                         onRelink = { onRelink(app) },
+                        fixed = LinkEngine.isBuiltIn(app.packageName),
                     )
                 }
             }
@@ -484,7 +489,7 @@ private fun DeviceSearchField(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)
+            .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 10.dp)
             .height(38.dp)
             .clip(CircleShape)
             .background(p.wash)
@@ -583,6 +588,12 @@ private fun LinkedRow(
     onUnbindClick: () -> Unit,
     onUnbindCancel: () -> Unit,
     onRelink: () -> Unit,
+    /**
+     * 内置绑定（FitHub 自己）：这条关系是固定的，既不给「换绑」也不给「解除关联」。
+     * 数据层 [LinkEngine.bind] / [LinkEngine.unbind] 同样会拒绝 —— 这里是**不提供入口**，
+     * 两层都堵才不会出现「界面上没有按钮、但某个别处的调用还是改了它」。
+     */
+    fixed: Boolean = false,
 ) {
     val p = FitTheme.palette
     val (badgeText, badgeTone, badgeIcon) = when (state) {
@@ -634,20 +645,35 @@ private fun LinkedRow(
             }
             Icon(FiArrowRight, null, tint = p.ink4, modifier = Modifier.size(16.dp))
         }
-        // 操作行：默认「换仓库 / 解除关联」，待确认时原地换成「确认解除 / 取消」
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 79.dp, end = 20.dp, top = 2.dp, bottom = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (unbindArmed) {
-                RowAction(stringResource(R.string.device_unbind_confirm), p.toneFg(FitTone.Bad), onUnbindClick)
-                RowAction(stringResource(R.string.device_cancel), p.ink4, onUnbindCancel)
-            } else {
-                RowAction(stringResource(R.string.device_relink), p.ink2, onRelink)
-                RowAction(stringResource(R.string.device_unbind), p.toneFg(FitTone.Bad), onUnbindClick)
+        /*
+         * 操作行：默认「换仓库 / 解除关联」，待确认时原地换成「确认解除 / 取消」。
+         *
+         * [fixed] 为真（内置绑定，比如 FitHub 自己）时**两个入口都不给**，换一行说明。
+         * 不是简单地藏起来就算完 —— 什么都不显示的话，用户会以为这一行是漏做了，
+         * 然后去设置里翻、或者干脆以为功能坏了。写清楚「这是固定的」才是真的回答。
+         */
+        if (fixed) {
+            Text(
+                stringResource(R.string.device_link_fixed),
+                style = MonoMeta,
+                color = p.ink4,
+                modifier = Modifier.padding(start = 79.dp, end = 20.dp, top = 2.dp, bottom = 2.dp),
+            )
+        } else {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 79.dp, end = 20.dp, top = 2.dp, bottom = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (unbindArmed) {
+                    RowAction(stringResource(R.string.device_unbind_confirm), p.toneFg(FitTone.Bad), onUnbindClick)
+                    RowAction(stringResource(R.string.device_cancel), p.ink4, onUnbindCancel)
+                } else {
+                    RowAction(stringResource(R.string.device_relink), p.ink2, onRelink)
+                    RowAction(stringResource(R.string.device_unbind), p.toneFg(FitTone.Bad), onUnbindClick)
+                }
             }
         }
         // 指纹为空时不展示

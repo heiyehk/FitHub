@@ -2,7 +2,7 @@
 
 中文 · [English](产品概述.md)
 
-Version 0.0.1 · 2026-10-05
+Version 0.0.2 · 2026-10-06
 
 This document describes product positioning and feature scope. Each module is marked with its current implementation state — the README has a more detailed status breakdown.
 
@@ -17,7 +17,7 @@ FitHub is an open-source app discovery and sideloading client that works without
 | Category | Open-source app discovery + release sideloading |
 | Core difference | Device fit recommendation (picking the right asset from a pile) + installed-app scan |
 | Works without login | Discovery, search, user/org browsing, release viewing, fit parsing |
-| Unlocked by login | Rate limit 60/h → 5000/h, private repositories (wired, unverified end to end) |
+| Unlocked by login | Rate limit 60/h → 5000/h (verified on a device), private repositories (wired, unproven) |
 | Out of scope | Issues / PRs / code browsing, CI Actions, APK repackaging, ads, recommendation algorithms |
 
 Login exists to raise the API quota, not as a gate on any browsing or download feature.
@@ -144,7 +144,7 @@ render pass, and the text version already carries the part that makes sharing wo
 verdict for *your* device. A repo detail panel also has an "open the original release" button that
 hands off to the browser.
 
-### 9. GitHub OAuth login (implemented, unverified end to end)
+### 9. GitHub OAuth login (implemented, verified on a device)
 
 - Device Flow (native GitHub support, no callback URI required)
 - Minimal scope: `read:user` only — no write scopes, no cloud sync
@@ -155,9 +155,12 @@ hands off to the browser.
 
 **What is and is not verified**: the client ID reaches `BuildConfig`, requests do go out to
 `https://github.com/login/device/code`, and each failure state (no client ID, request failed,
-denied, code expired, `slow_down` back-off) has its own screen. Nobody has completed a real round
-trip — the emulator used during development reached `api.github.com` but not `github.com`, and no
-OAuth app was registered for it. Treat sign-in as unproven until it runs once on a real device.
+denied, code expired, `slow_down` back-off) has its own screen. **A full round trip has since been
+completed on a real device** — device code, browser authorisation, polling through to a token, and the
+`60 → 5000` per-hour quota switch afterwards, with the token landing in the Android Keystore.
+
+**Private repositories are still unproven.** That code path is wired, but there was no real private
+repository to exercise it against, so it should not be counted as a verified capability.
 
 ### 10. Localization (implemented)
 
@@ -232,7 +235,7 @@ Only transform, alpha, and color animate — no layout animations. Target 60/120
 | APK parsing | `getPackageArchiveInfo()` + `ZipFile` | Implemented |
 | Device scan | `getInstalledPackages(GET_SIGNING_CERTIFICATES)` | Implemented |
 | DI | None, constructed by hand | Implemented |
-| Navigation | Single-Activity overlay, no NavHost | Implemented |
+| Navigation | Single-Activity overlay plus a page stack, no NavHost | Implemented |
 | Persistence | Room | Not used — `filesDir` + SharedPreferences + Keystore, which is enough at this size |
 | DI framework | Hilt | Not currently needed |
 | Language | Android resources + platform per-app locale | Implemented (zh/en, zero new dependencies) |

@@ -1,10 +1,6 @@
 package com.heiyehk.fithub.ui.detail
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
@@ -289,7 +285,12 @@ fun DetailPanel(
     val p = FitTheme.palette
     var tab by remember(repo.id) { mutableStateOf(DetailTab.Assets) }
     val downloads = remember(repo.id) { mutableStateMapOf<String, DownloadState>() }
-    val install = remember(repo.id) { mutableStateOf<InstallStep>(InstallStep.Idle) }
+    // 初始值必须从进程级的 DownloadCenter 还原，不能一律 Idle —— 详见 restoreStep。
+    // 两次打开同一个仓库时 DownloadCenter 可能还留着上一轮的状态，面板却从零开始，
+    // 于是「点下载没反应」或者「白下一遍」。
+    val install = remember(repo.id) {
+        mutableStateOf(restoreStep(DownloadCenter.state.value, repo.best?.name))
+    }
     val installStep = install.value
     val scope = rememberCoroutineScope()
 
@@ -1184,17 +1185,12 @@ private fun InstallProgress(
 /**
  * 跳到「安装未知来源应用」的授权页。
  *
- * 这个权限没有 API 能代用户授予，只能把设置页指给用户自己点。这是 Android 的设计，
- * 任何声称能静默绕过它的方案都不该进这个项目。
+ * 实现挪到了 [ApkInstaller.openPermissionSettings]：通知栏那条安装入口
+ * （[com.heiyehk.fithub.MainActivity]）也得跳同一页，两边各写一份的话
+ * 一定会有一边漏掉 —— 漏掉的那边只弹一句 toast，用户没有能解决的入口。
  */
-private fun openInstallPermissionSettings(context: Context) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-    val intent = Intent(
-        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-        Uri.fromParts("package", context.packageName, null),
-    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    runCatching { context.startActivity(intent) }
-}
+private fun openInstallPermissionSettings(context: Context) =
+    ApkInstaller.openPermissionSettings(context)
 
 /**
  * 下载 → 校验 → 交给系统安装器。
@@ -1237,7 +1233,13 @@ private fun startInstall(
         onNoDownloadUrl()
         return
     }
-    if (DownloadCenter.isBusyFor(asset.name)) return
+    if (DownloadCenter.isBusyFor(asset.name)) {
+        // 不能静默 return：那正是「点了完全没反应」的成因 —— 按钮写着「下载」，
+        // 点下去什么也不发生，用户只会以为 App 卡了。把已经在跑的那一次接到界面上，
+        // 按钮当场变成可暂停的进度态。
+        state.value = restoreStep(DownloadCenter.state.value, asset.name)
+        return
+    }
 
     scope.launch {
         state.value = InstallStep.Downloading(0f, context.getString(R.string.install_stage_preparing))
@@ -1309,6 +1311,70 @@ private fun startInstall(
     }
 }
 
+/**
+ * 把**进程级**的 [DownloadCenter.Progress] 还原成这个面板该显示的 [InstallStep]。
+ *
+ * 存在的理由是「点了完全没反应」那个 bug：面板打开时 [install] 原来一律从
+ * `InstallStep.Idle` 起步，而 [DownloadCenter] 是 `object` —— **进程活多久它活多久，
+ * 比面板活得久**。于是只要下载是在面板关着的时候跑的（前台服务继续下载，用户
+ * 切出去再回来 / 转屏 / 面板被重建），两边就对不上了：
+ *
+ * - 服务还在跑 → 全局是 `Running`，面板是 `Idle` → 按钮写着「下载」，
+ *   点下去被 `isBusyFor` 静默 return，**什么都没发生**
+ * - 服务已经下完 → 全局是 `Ready`，面板是 `Idle` → 点下去会**重新下几十 MB**
+ *
+ * 面板打开时先按全局状态还原一次，两边就重新对齐了。
+ *
+ * [assetName] 对不上的一律当 [InstallStep.Idle]：全局那一份是别的仓库的下载，
+ * 拿它冒充本仓库的进度只会显示一个假的百分比。
+ *
+ * [DownloadCenter.Progress.Verifying] 是唯一不带资产名的状态，而 DownloadCenter
+ * 是**单槽**的 —— 同一时刻只有一次下载/校验在进行，所以直接认领给当前面板。
+ */
+private fun restoreStep(
+    progress: DownloadCenter.Progress,
+    assetName: String?,
+): InstallStep {
+    if (assetName == null) return InstallStep.Idle
+    return when (progress) {
+        is DownloadCenter.Progress.Running ->
+            if (progress.assetName == assetName) {
+                InstallStep.Downloading(
+                    if (progress.total > 0) progress.bytes.toFloat() / progress.total else 0f,
+                    progress.speed,
+                )
+            } else {
+                InstallStep.Idle
+            }
+
+        is DownloadCenter.Progress.Paused ->
+            if (progress.assetName == assetName) {
+                InstallStep.Paused(
+                    if (progress.total > 0) progress.saved.toFloat() / progress.total else 0f,
+                    progress.saved,
+                    progress.total,
+                )
+            } else {
+                InstallStep.Idle
+            }
+
+        DownloadCenter.Progress.Verifying -> InstallStep.Verifying
+
+        is DownloadCenter.Progress.Ready ->
+            if (progress.assetName == assetName) {
+                InstallStep.ReadyToInstall(progress.sha, progress.verified)
+            } else {
+                InstallStep.Idle
+            }
+
+        // 失败态回到 Idle：重新打开面板就该给一次干净的重试机会，
+        // 而不是把上一轮的失败原因一直挂在按钮上。
+        DownloadCenter.Progress.Idle,
+        is DownloadCenter.Progress.Failed,
+        -> InstallStep.Idle
+    }
+}
+
 /** 单个产物的行内下载按钮：走同一条前台服务链路，和详情页主 CTA 共用进度。 */
 private fun startDownload(
     context: Context,
@@ -1323,7 +1389,18 @@ private fun startDownload(
 ) {
     val url = asset.downloadUrl
     if (url.isNullOrBlank()) { onNoUrl(); return }
-    if (DownloadCenter.isBusyFor(asset.name)) return
+    if (DownloadCenter.isBusyFor(asset.name)) {
+        // 同 startInstall：不能静默 return，把已经在跑的进度接到这一行上，
+        // 否则行内按钮点了不动，而界面上连「正在下」都看不出来。
+        val p = DownloadCenter.state.value
+        if (p is DownloadCenter.Progress.Running) {
+            downloads[asset.name] = DownloadState.Running(
+                if (p.total > 0) p.bytes.toFloat() / p.total else 0f,
+                p.speed,
+            )
+        }
+        return
+    }
     scope.launch {
         downloads[asset.name] = DownloadState.Running(0f, context.getString(R.string.install_stage_preparing_short))
         DownloadCenter.enqueue(context, url, asset, repoName)

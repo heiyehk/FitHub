@@ -23,27 +23,30 @@ It does two things a generic browser tab cannot:
 
 ## Status
 
-Early and incomplete. Version `0.0.1`, and the following is accurate as of that release:
+Early and incomplete. Version `0.0.2`, and the following is accurate as of that release:
 
 | Area | State |
 |---|---|
 | Discovery, search, user/org pages, repo detail | Working, live GitHub API |
+| Search history | Working — last 10 queries, clearable, local only and never synced |
+| Navigation | Working — back returns to the page you came from (search results, user page, My projects), not to the home tab |
 | API rate limit display | Working, reads `X-RateLimit-Remaining` |
 | Installed-app scan and device ABI/SDK detection | Working |
 | Release asset classification and fit verdict | Working |
 | APK parsing via `PackageManager` | Working, on user request |
 | README rendering | Working, fetched on demand when the tab is opened |
-| Package-to-repository binding | Working, user-confirmed only |
+| Package-to-repository binding | Working — a bundled F-Droid index answers most lookups with no request at all; everything else is a user-confirmed candidate. FitHub's own link is fixed and cannot be unlinked or repointed |
 | Subscriptions | Working — local list, import/export, manual refresh. No scheduled checks or notifications yet |
 | Subscription sync over WebDAV | Working — opt-in, last-write-wins on `exportedAt`. Presets for the common providers; self-hosted needs a URL typed in |
 | Home sections | Working — the four built-ins can be toggled, up to 6 custom topic sections |
 | History | Working — local only, never synced. Browsing history and download/install records share one list; a record is written when the file actually lands, not when the button is tapped |
 | Download and install | Working — foreground service with a progress notification, SHA-256 computed on download, handed to the system installer |
-| Sign-in | Wired, **not verified end to end** — GitHub Device Flow. Requests a device code, you authorise it in the browser, token goes into the Android Keystore. `read:user` only |
+| Sign-in | Working — GitHub Device Flow, verified end to end on a device. `read:user` only, token in the Android Keystore |
+| Update check | Working — compares version numbers properly (not string equality), and says so when the local build is ahead of the latest release |
 | Share | Working — system share sheet with the repo, its fit verdict for this device, and the Release URL. Text, not an image card |
 | Preferences | Working — appearance (follow system / light / dark), include prereleases, require a SHA-256 checksum before install |
 
-APKs ship with every release. Take [`FitHub-v0.0.1-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.1) — signed, R8-minified, and carrying all four ABIs. The `-debug` variant is there when you want logcat.
+APKs ship with every release. Take [`FitHub-v0.0.2-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.2) — signed, R8-minified, and carrying all four ABIs. The `-debug` variant is there when you want logcat.
 
 ## What it does
 
@@ -332,9 +335,9 @@ The cache tests pin the two rules that make offline viewing honest: a cache olde
 ## Known limitations
 
 - No real device was available during development. Frame rates, the installed-app count on real hardware, and Play-store signature conflicts are untested. Everything above was verified on an x86_64 emulator plus JVM tests.
-- **Sign-in has never completed a real round trip.** What was checked: the client ID reaches `BuildConfig`, a request actually goes out to `https://github.com/login/device/code`, and every failure state (no client ID, request failed, denied, code expired, `slow_down` back-off) is surfaced as its own screen rather than a generic error. What was not: showing you a device code, polling to completion, and the `60 → 5000` second quota switch after authorisation. The emulator used during development reached `api.github.com` but not `github.com`, and no OAuth app was registered for it. Treat sign-in as unproven until someone runs it once on a real device.
+- **Sign-in is verified end to end on a real device.** The device code, the browser authorisation, polling through to a token and the `60 → 5000` per-hour quota switch after signing in have all been exercised. The token lands in the Android Keystore. **Private repositories are still unproven** — the code path is wired, but there was no real private repo to test it against.
 - Discovery is cached for an hour and repository detail for six. A refresh button invalidates the cache first, so it always hits the network. There is no scheduled background refresh yet, so cached data only gets replaced when you pull to refresh or open a screen that misses the cache.
-- Package-to-repository lookup relies on the package name appearing in a repository or its README. Projects that only document the package name in a wiki or issue thread will not be found. Bind them manually.
+- Package-to-repository lookup checks the bundled F-Droid index first (3698 mappings, zero requests). Anything it misses falls back to searching by package name, which still only finds projects that mention it in the repo name or README — bind the rest manually.
 - Tapping a card mid-scroll starts the detail transition from the tap coordinates, so a fast flick can land the panel slightly off. `LazyListState` lookup would fix it.
 - `checkReleaseBuilds` is disabled in `app/build.gradle.kts`: AGP 9.1.0's `lintVitalAnalyzeRelease` crashes while analyzing Compose sources. `./gradlew lint` still works.
 - The detail transition is an overlay inside a single Activity rather than a NavHost. System back is handled by `BackHandler`.

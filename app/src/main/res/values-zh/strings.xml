@@ -298,6 +298,8 @@
     <string name="info_update_compare">仓库上的最新版本是 %1$s，你装的是 %2$s。</string>
     <string name="info_update_source_only">更新包只从 GitHub Release 下载，不经任何第三方。</string>
     <string name="info_update_not_found">没查到：%1$s</string>
+    <string name="info_update_local_newer">本机 %1$s 比线上最新的 %2$s 还新</string>
+    <string name="info_update_local_newer_para">你装的是 %1$s，仓库上最新的只有 %2$s —— 本机版本比线上更新。</string>
     <string name="login_title">用 GitHub 登录</string>
     <string name="login_nocfg_h">这个包不能登录</string>
     <string name="login_nocfg_desc">它没有编进 GitHub OAuth App 的 client_id。</string>
@@ -411,6 +413,7 @@
     <string name="device_cancel">取消</string>
     <string name="device_relink">换仓库</string>
     <string name="device_unbind">解除关联</string>
+    <string name="device_link_fixed">内置绑定 · 不可更改</string>
     <string name="device_local_signer">本机签名 %1$s</string>
     <string name="device_find_repo">查仓库</string>
     <string name="device_lookup_busy">正在按包名反查 GitHub…搜不到也会明说，不会随便找个仓库凑数。</string>
@@ -434,6 +437,8 @@
     <string name="search_syntax_stars">按 star 数筛</string>
     <string name="search_syntax_archived">排除已归档</string>
     <string name="search_syntax_title">支持 GitHub 搜索语法</string>
+    <string name="search_history_title">最近搜索</string>
+    <string name="search_history_clear">清空</string>
     <string name="search_syntax_note">语法原样透传给 GitHub search，不是本地过滤 —— 搜到的每条都是接口返回的真数据。</string>
     <string name="person_retry">重试</string>
     <string name="person_check_assets">检查安装包</string>

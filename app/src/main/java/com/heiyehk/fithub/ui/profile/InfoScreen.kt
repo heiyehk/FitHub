@@ -46,6 +46,7 @@ import com.heiyehk.fithub.data.Async
 import com.heiyehk.fithub.data.FitRepository
 import com.heiyehk.fithub.data.Mirrors
 import com.heiyehk.fithub.data.Prefs
+import com.heiyehk.fithub.data.remote.VersionTag
 import com.heiyehk.fithub.ui.icons.FiArrowLeft
 import com.heiyehk.fithub.ui.icons.FiCheck
 import com.heiyehk.fithub.ui.icons.FiRefresh
@@ -422,11 +423,21 @@ fun UpdateScreen(onBack: () -> Unit, repo: FitRepository, onToast: (String, Stri
                         when (r) {
                             is Async.Ok -> {
                                 val latest = r.value
+                                // 按版本号比，不是字符串相等 —— 见 VersionTag 的注释：
+                                // tag 带 v 前缀时字符串相等恒为 false，会永远报「新版本」。
+                                val cmp = VersionTag.compare(latest, BuildConfig.VERSION_NAME)
                                 onToast(
-                                    if (latest == BuildConfig.VERSION_NAME) {
-                                        context.getString(R.string.info_update_up_to_date)
-                                    } else {
-                                        context.getString(R.string.info_update_new_version, latest)
+                                    when {
+                                        cmp == 0 -> context.getString(R.string.info_update_up_to_date)
+                                        // 远端比本机旧：装的是开发版或更晚的构建。
+                                        // 照实说，不能让用户去「更新」到一个更旧的包。
+                                        cmp < 0 -> context.getString(
+                                            R.string.info_update_local_newer,
+                                            BuildConfig.VERSION_NAME,
+                                            latest,
+                                        )
+
+                                        else -> context.getString(R.string.info_update_new_version, latest)
                                     },
                                     null,
                                 )
@@ -465,13 +476,29 @@ fun UpdateScreen(onBack: () -> Unit, repo: FitRepository, onToast: (String, Stri
             is Async.Ok -> {
                 Spacer(Modifier.height(18.dp))
                 InfoHeading(stringResource(R.string.info_update_h_result))
-                if (r.value == BuildConfig.VERSION_NAME) {
-                    InfoPara(stringResource(R.string.info_update_same, BuildConfig.VERSION_NAME))
-                } else {
-                    InfoPara(
-                        stringResource(R.string.info_update_compare, r.value, BuildConfig.VERSION_NAME),
-                    )
-                    InfoPara(stringResource(R.string.info_update_source_only))
+                val cmp = VersionTag.compare(r.value, BuildConfig.VERSION_NAME)
+                when {
+                    cmp == 0 -> InfoPara(stringResource(R.string.info_update_same, BuildConfig.VERSION_NAME))
+
+                    // 本机比线上新。这不是「检查失败」，是用户装了个更新的构建，
+                    // 如实写出来比含糊其辞有用。
+                    cmp < 0 -> {
+                        InfoPara(
+                            stringResource(
+                                R.string.info_update_local_newer_para,
+                                BuildConfig.VERSION_NAME,
+                                r.value,
+                            ),
+                        )
+                        InfoPara(stringResource(R.string.info_update_source_only))
+                    }
+
+                    else -> {
+                        InfoPara(
+                            stringResource(R.string.info_update_compare, r.value, BuildConfig.VERSION_NAME),
+                        )
+                        InfoPara(stringResource(R.string.info_update_source_only))
+                    }
                 }
             }
 

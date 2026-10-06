@@ -301,6 +301,8 @@
     <string name="info_update_compare">The latest release is %1$s; you have %2$s installed.</string>
     <string name="info_update_source_only">Updates are downloaded only from the GitHub release, never through a third party.</string>
     <string name="info_update_not_found">Could not check: %1$s</string>
+    <string name="info_update_local_newer">Your build %1$s is newer than the latest release %2$s</string>
+    <string name="info_update_local_newer_para">You have %1$s installed and the latest release is only %2$s — this build is ahead of the release.</string>
     <string name="login_title">Sign in with GitHub</string>
     <string name="login_nocfg_h">This build cannot sign in</string>
     <string name="login_nocfg_desc">It has no GitHub OAuth App client_id compiled in.</string>
@@ -414,6 +416,7 @@
     <string name="device_cancel">Cancel</string>
     <string name="device_relink">Change repo</string>
     <string name="device_unbind">Unlink</string>
+    <string name="device_link_fixed">Built-in link · fixed</string>
     <string name="device_local_signer">Local signer %1$s</string>
     <string name="device_find_repo">Find repo</string>
     <string name="device_lookup_busy">Looking the package name up on GitHub… if nothing matches we will say so rather than pick a random repo.</string>
@@ -437,6 +440,8 @@
     <string name="search_syntax_stars">Filter by star count</string>
     <string name="search_syntax_archived">Exclude archived</string>
     <string name="search_syntax_title">GitHub search syntax supported</string>
+    <string name="search_history_title">Recent searches</string>
+    <string name="search_history_clear">Clear</string>
     <string name="search_syntax_note">The syntax is passed straight through to GitHub search — this is not a local filter, so every row you see is real data from the API.</string>
     <string name="person_retry">Retry</string>
     <string name="person_check_assets">Check for assets</string>
