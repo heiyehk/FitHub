@@ -8,6 +8,7 @@ import com.heiyehk.fithub.data.Dist
 import com.heiyehk.fithub.data.Explain
 import com.heiyehk.fithub.data.FitEngine
 import com.heiyehk.fithub.data.FitState
+import com.heiyehk.fithub.data.NO_VERSION
 import com.heiyehk.fithub.data.Readme
 import com.heiyehk.fithub.data.ReleaseNote
 import com.heiyehk.fithub.data.Repo
@@ -133,7 +134,7 @@ object GitHubMapper {
         }
 
         return repo.copy(
-            version = latest?.tagName ?: "—",
+            version = latest?.tagName ?: NO_VERSION,
             date = latest?.date?.ifBlank { repo.date } ?: repo.date,
             history = notes,
             // 区别要分清：真的一个 release 都没有 vs 只发过预发布（开关打开就能用）
@@ -245,54 +246,6 @@ object GitHubMapper {
             n.contains("linux") || n.contains("gnu") || n.endsWith(".deb") || n.endsWith(".rpm") -> "Linux"
             else -> null
         }
-    }
-
-    /**
- * 挑「最该给用户的那一个」。
- *
- * 逐级降级：架构完全匹配 → 只是降级 → 没有架构信息但确实是 APK → 没有架构信息。
- * **每一档内部都先挑 release**，不只降级档。
- *
- * 为什么每一档都要：产物行的「完全匹配」是下载之后读真实清单得出的，
- * 所以一个仓库里 debug 包和 release 包**常常同时都是 Match**。
- * 之前只有降级档用了 [preferRelease]，匹配档还是 `firstOrNull` ——
- * 谁在列表里靠前谁赢，而 debug 常常就排在前面。
- *
- * 为什么 release 优先：debug 包通常带 debug 签名、还可能带 applicationId 后缀
- * （`com.foo.debug`），装了要么和正式版冲突、要么装成一个用不上的分身；
- * unsigned 更是根本装不上。这两个都不是「更省事的选择」，是**装不出想要结果的选择**。
- */
-private fun pickBest(assets: List<Asset>): Asset? =
-        preferRelease(assets) { it.fit == FitState.Match && it.kind == "APK" }
-            ?: preferRelease(assets) { it.fit == FitState.Match }
-            ?: preferRelease(assets) { it.fit == FitState.Degrade && it.kind == "APK" }
-            ?: preferRelease(assets) { it.fit == FitState.Degrade }
-
-    /**
-     * 在同一档候选里先挑 release 产物。
-     *
-     * `-unsigned` 排在 `-release` 之后而不是之前：文件名里同时出现两个词时
-     * （`app-release-unsigned.apk`），它装不上，不能因为含 "release" 就被选中。
-     * 两个都没有时保持传入顺序 —— GitHub 返回什么就是什么，不额外排序。
-     */
-    private fun preferRelease(assets: List<Asset>, pred: (Asset) -> Boolean): Asset? {
-        val candidates = assets.filter(pred)
-        return candidates.firstOrNull { isReleaseBuild(it.name) } ?: candidates.firstOrNull()
-    }
-
-    /** 文件名像正式发布包，且不是未签名的那种 */
-    internal fun isReleaseBuild(name: String): Boolean {
-        val lower = name.lowercase()
-        return lower.contains("release") && !lower.contains("unsigned")
-    }
-
-    /** 暴露给单测：[pickBest] 私有，但「同级里挑 release」这条规则必须钉住 */
-    internal fun pickBestForTest(assets: List<Asset>): Asset? = pickBest(assets)
-
-    fun verdictOf(assets: List<Asset>): Verdict {
-        if (assets.isEmpty()) return Verdict.Unknown
-        val best = pickBest(assets) ?: return Verdict.Unknown
-        return if (best.fit == FitState.Match) Verdict.Ok else Verdict.Warn
     }
 
     /**

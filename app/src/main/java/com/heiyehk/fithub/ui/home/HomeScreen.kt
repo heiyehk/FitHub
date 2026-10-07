@@ -574,7 +574,9 @@ internal fun TrendCard(repo: Repo, rank: Int, onTileBounds: (String, Rect) -> Un
         Row(verticalAlignment = Alignment.CenterVertically) {
             MetaRow(Modifier.weight(1f)) {
                 LangDot(repo.langColor)
-                MetaText(repo.version)
+                // 没查到 release 时 version 是占位符「—」，画出来像是有个叫「—」的版本。
+                // 热门里的 flutter / scrcpy 都是这种：宁可只留语言点，也不要那根杠。
+                if (repo.hasVersion) MetaText(repo.version)
             }
             Stars(Env.formatStars(repo.stars))
         }
@@ -633,8 +635,12 @@ internal fun RepoRow(repo: Repo, onTileBounds: (String, Rect) -> Unit, onClick: 
             }
             Spacer(Modifier.width(10.dp))
             Column(horizontalAlignment = Alignment.End) {
-                MonoText(repo.version)
-                Spacer(Modifier.height(4.dp))
+                // 同上：占位符「—」不是版本号，不画。
+                // 这一列只有徽标时不必留 4.dp 的行距去撑一个空位。
+                if (repo.hasVersion) {
+                    MonoText(repo.version)
+                    Spacer(Modifier.height(4.dp))
+                }
                 FitBadge(repo.verdict.tone, stringResource(repo.verdict.labelRes))
             }
         }

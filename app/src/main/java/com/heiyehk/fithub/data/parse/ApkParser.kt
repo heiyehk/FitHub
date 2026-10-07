@@ -154,6 +154,15 @@ object ApkParser {
     private fun judge(info: ApkInfo, asset: Asset): FitState {
         val device = Env.device
         if (info.minSdk > device.sdk) return FitState.Mismatch
+        // 空 ABI 列表 = 这个包**根本没有原生库**，纯 Java/Kotlin 代码，在任何 ABI 上都跑得起来。
+        //
+        // 原先没有这一支，空列表落到下面的 else 被判成 Mismatch，后果是一整条连锁：
+        // 纯 Java 应用（实测是 Markor，一个 Markdown 编辑器）被判「本机装不上」，
+        // 还因为 `pickBest` 的四档只认 Match / Degrade 而被整个跳过 ——
+        // `repo.best` 于是退到上一个 tag，主 CTA 转去推一个**更旧**的版本，
+        // 而刚下好的那个变成一行点不动的死条目。
+        // 界面上写出来的话也是自相矛盾的：「真实清单里只有（空），本机是 x86_64」。
+        if (info.abis.isEmpty()) return FitState.Match
         return if (info.abis.contains(device.abi) || info.abis.size > 2) FitState.Match else FitState.Mismatch
     }
 
@@ -166,7 +175,9 @@ object ApkParser {
                     listOf(info.minSdk, device.sdk, device.sdkLabel),
                 )
 
-            !info.abis.contains(device.abi) && info.abis.size <= 2 ->
+            // 和 [judge] 同一件事：没有原生库就没有 ABI 可对，空列表不构成不匹配。
+            info.abis.isNotEmpty() &&
+                !info.abis.contains(device.abi) && info.abis.size <= 2 ->
                 Explain(
                     R.string.reason_parsed_abis,
                     listOf(info.abis.joinToString(), device.abi),

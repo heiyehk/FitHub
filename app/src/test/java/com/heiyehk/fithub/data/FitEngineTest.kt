@@ -145,7 +145,7 @@ class FitEngineTest {
     @Test
     fun `没有架构信息时优先推荐 release 而不是 debug`() {
         Env.device = device("arm64-v8a")
-        val best = GitHubMapper.pickBestForTest(
+        val best = pickBest(
             listOf(
                 asset("FitHub-1.0.0-debug.apk"),
                 asset("FitHub-1.0.0-release.apk"),
@@ -160,16 +160,16 @@ class FitEngineTest {
         Env.device = device("arm64-v8a")
         assertFalse(
             "app-release-unsigned 不算 release 产物",
-            GitHubMapper.isReleaseBuild("App-1.0.0-release-unsigned.apk"),
+            isReleaseBuild("App-1.0.0-release-unsigned.apk"),
         )
-        assertTrue(GitHubMapper.isReleaseBuild("App-1.0.0-release.apk"))
+        assertTrue(isReleaseBuild("App-1.0.0-release.apk"))
     }
 
     /** 架构完全匹配的包仍然压过 release 偏好 —— release 只在同一档里起作用 */
     @Test
     fun `架构匹配的包仍然优先于 release 偏好`() {
         Env.device = device("arm64-v8a")
-        val best = GitHubMapper.pickBestForTest(
+        val best = pickBest(
             listOf(
                 asset("App-1.0.0-release.apk"),
                 asset("App-1.0.0-arm64-v8a.apk"),
@@ -192,8 +192,42 @@ class FitEngineTest {
         val debug = asset("App-1.0.0-debug.apk").copy(fit = FitState.Match)
         val release = asset("App-1.0.0-release.apk").copy(fit = FitState.Match)
         // debug 故意排在前面 —— 列表顺序是 GitHub 返回的，字母序 d < r
-        val best = GitHubMapper.pickBestForTest(listOf(debug, release))
+        val best = pickBest(listOf(debug, release))
         assertEquals("App-1.0.0-release.apk", best!!.name)
+    }
+
+    /**
+     * 端到端：**主 CTA 真正读的那个字段**必须挑到 release。
+     *
+     * 上面几条只测了选择规则本身，而规则曾经有**两份**：`GitHubMapper` 里一份
+     * （带 release 优先）、`Repo.withAssets` 里一份（不带）。真正喂给主按钮的
+     * `repo.best` 来自 `withAssets`，所以「下载给 release」那次修复改的是没人调的那份，
+     * 界面照样把 debug 当成「最该给用户的那一个」—— 而只测规则的单测**全绿**。
+     *
+     * 这条走完整链路（`Repo.withAssets` → `best`），规则再复制一份也会立刻红。
+     */
+    @Test
+    fun `主按钮用的 repo best 必须挑到 release 而不是列表靠前的 debug`() {
+        Env.device = device("arm64-v8a")
+        val debug = asset("FitHub-v0.0.9-debug.apk").copy(fit = FitState.Match)
+        val release = asset("FitHub-v0.0.9-release.apk").copy(fit = FitState.Match)
+        // debug 排在前面 —— GitHub 就是按字母序返回的，d < r
+        val r = repo(assets = listOf(debug, release)).withAssets(listOf(debug, release))
+        assertEquals("FitHub-v0.0.9-release.apk", r.best!!.name)
+    }
+
+    /**
+     * 同样两条产物，但都只是 Degrade（文件名里没写 ABI，这是绝大多数仓库的常态）时
+     * 也必须挑 release —— 降级档曾经单独漏了这条。
+     */
+    @Test
+    fun `两个包都只算降级时 best 仍挑 release`() {
+        Env.device = device("arm64-v8a")
+        val debug = asset("FitHub-v0.0.9-debug.apk")
+        val release = asset("FitHub-v0.0.9-release.apk")
+        assertEquals(FitState.Degrade, debug.fit)
+        val r = repo(assets = listOf(debug, release)).withAssets(listOf(debug, release))
+        assertEquals("FitHub-v0.0.9-release.apk", r.best!!.name)
     }
 
     @Test

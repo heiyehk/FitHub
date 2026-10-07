@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +82,7 @@ import com.heiyehk.fithub.data.Verdict
 import com.heiyehk.fithub.data.install.ApkAction
 import com.heiyehk.fithub.data.install.ApkInstaller
 import com.heiyehk.fithub.data.install.ApkLibrary
+import com.heiyehk.fithub.data.install.ApkStore
 import com.heiyehk.fithub.data.install.DownloadCenter
 import com.heiyehk.fithub.data.install.DownloadedApk
 import com.heiyehk.fithub.data.install.actionFor
@@ -128,6 +130,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.io.File
 
 /** 面板几何常量。抽屉图标飞行动画的目标位置也用它算，一处定义 */
 object DetailMetrics {
@@ -189,15 +192,15 @@ sealed interface InstallStep {
     data class Failed(val reason: String) : InstallStep
 }
 
-val InstallStep.progressFraction: Float
-    get() = when (this) {
-        is InstallStep.Downloading -> progress
-        is InstallStep.Paused -> progress
-        is InstallStep.Blocked -> 1f
-        is InstallStep.Failed -> 0f
-        InstallStep.Idle -> 0f
-        else -> 1f
-    }
+/**
+ * 「已提交给系统安装器」最多等多久。
+ *
+ * 只在这段时间里兜底，不是「安装一定会花这么久」：正常路径几秒内就有回调，
+ * 剩下的时间是留给「用户在安装器里慢慢看条款、按安装」的真实交互。
+ * 真正要防的是**永远不来**的那一种 —— 出口只有系统那条 PendingIntent 回调，
+ * 它不来时界面就既不能重试也不能取消。
+ */
+private const val INSTALL_CALLBACK_TIMEOUT_MS = 3 * 60 * 1000L
 
 fun InstallStep.stageLabel(context: Context): String =
     when (this) {
@@ -265,6 +268,17 @@ fun DetailPanel(
      */
     onInstallFailed: (String) -> Unit = {},
     /**
+     * 中枢正忙着别的下载时，主按钮被点了要把话说出来。
+     *
+     * [DownloadCenter] 是**单槽**的：新任务会把上一个 job 直接 cancel 掉
+     * （见 DownloadService.performDownload）。所以这条路上只有两种坏结局：
+     * 拦都不拦就 `startInstall` ⇒ **静默抢占**，用户正在下的那个被掐断而它那一行
+     * 收不到任何通知，表现为「它莫名其妙停住了」；
+     * 或者像以前那样 `isBusyFor` 命中就 `return` ⇒ **静默无反应**。
+     * 两条都要说出来，去哪儿暂停 / 取消由用户决定。
+     */
+    onBusyDownload: (String) -> Unit = {},
+    /**
      * 已下载清单（落盘的，跨进程）。
      *
      * 按钮显示「下载 / 安装 / 打开」全靠它。之前这里只有组件内的 `downloads`，
@@ -303,6 +317,12 @@ fun DetailPanel(
     modifier: Modifier = Modifier,
 ) {
     val p = FitTheme.palette
+    // 下载服务要 Context 落盘、PackageInstaller 要 Context 提交，面板本身不接收参数：
+    // 让调用方把 Activity 传进来只会多一路可以传错的入口。
+    //
+    // 放在最前面而不是跟着 BackHandler：下面那几个 LaunchedEffect 要读盘上清单来决定
+    // 主按钮显示什么，而清单的判据是 [actionFor]，它要 Context。
+    val context = LocalContext.current
     var tab by remember(repo.id) { mutableStateOf(DetailTab.Assets) }
     val downloads = remember(repo.id) { mutableStateMapOf<String, DownloadState>() }
     // 初始值必须从进程级的 DownloadCenter 还原，不能一律 Idle —— 详见 restoreStep。
@@ -312,6 +332,10 @@ fun DetailPanel(
         mutableStateOf(restoreStep(DownloadCenter.state.value, repo.best?.name))
     }
     val installStep = install.value
+
+    /** 这一轮下载正在进行 —— 主按钮和它下面那行 meta 都不进入下载状态机。 */
+    val downloading = installStep is InstallStep.Downloading ||
+        installStep is InstallStep.Paused
 
     /** 下载全局状态**。
      *
@@ -347,6 +371,32 @@ fun DetailPanel(
             else -> false
         }
         if (stillLive) install.value = restoreStep(live, assetName)
+    }
+
+    /**
+     * 把**盘上清单**接进主 CTA —— 上一条只接了中枢，两边都会漏掉「已经下好了」这个事实。
+     *
+     * 中枢 [DownloadCenter] 是 `object`，**进程活多久它活多久**；清单 [library] 是落盘的，
+     * **进程死了它还在**。于是进程一死（用户手动杀、系统回收、或者装完 APK 把自己换掉），
+     * 中枢归零、`restoreStep` 返回 Idle，主按钮就退回「下载适配版本」——
+     * 可包明明好好躺在下载目录里，同一屏的产物行还照着清单显示绿色「安装」按钮。
+     * 界面上自相矛盾，用户看到的正是「下载完了还是打不开」。
+     *
+     * 这里必须和产物行走**同一个** [actionFor]：主按钮和行内按钮问的是同一个问题
+     * （这个产物现在该做什么），有两份算法就迟早对不上 ——
+     * 挑选产物那次已经栽过一次（规则写了两份，只修了没人调的那份）。
+     */
+    LaunchedEffect(installStep, library) {
+        if (installStep !is InstallStep.Idle) return@LaunchedEffect
+        val assetName = repo.best?.name ?: return@LaunchedEffect
+        val entry = library.firstOrNull {
+            it.repoName == repo.id && it.assetName == assetName
+        }
+        // 只认 INSTALL：已经装上的话行内按钮是「打开」，那是另一条入口的语义，
+        // 主 CTA 在这里跟着改会连带要改图标和点击分支，超出这次要修的范围。
+        if (actionFor(context, entry) == ApkAction.INSTALL) {
+            install.value = InstallStep.ReadyToInstall(sha = entry?.sha256.orEmpty(), verified = false)
+        }
     }
     val scope = rememberCoroutineScope()
 
@@ -443,10 +493,6 @@ fun DetailPanel(
      */
     val detailLoading = detailState is Async.Loading
     val detailError = (detailState as? Async.Err)?.message
-
-    // 下载服务要 Context 落盘、PackageInstaller 要 Context 提交，面板本身不接收参数：
-    // 让调用方把 Activity 传进来只会多一路可以传错的入口。
-    val context = LocalContext.current
 
     BackHandler { onClose() }
 
@@ -982,46 +1028,31 @@ fun DetailPanel(
                 .background(p.surface)
                 .padding(bottom = 14.dp),
         ) {
-            AnimatedVisibility(
-                visible = installStep !is InstallStep.Idle,
-                enter = fadeIn(tween(200)),
-                exit = fadeOut(tween(160)),
-            ) {
-                InstallProgress(
-                    step = installStep,
-                    onResume = {
-                        startInstall(
-                            context, install, downloads, repo, scope, onOpenRelease, onDownloaded,
-                            onPublished = onLibraryChanged,
-                        )
-                    },
-                    onCancel = {
-                        repo.best?.let { best ->
-                            DownloadCenter.cancel(context, best.name)
-                            downloads.remove(best.name)
-                        }
-                        DownloadCenter.reset()
-                        install.value = InstallStep.Idle
-                    },
-                )
-            }
             HairLine()
             Column(Modifier.padding(horizontal = DetailMetrics.sidePad, vertical = 14.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                /*
+                 * 主 CTA **不进入下载状态机**。
+                 *
+                 * 这一轮下载的所有控制 —— 进度环、暂停/继续、取消 —— 都在产物行
+                 * 自己的按钮上，而主 CTA 对应的就是 best 那一行，是同一个产物。
+                 * 两处各摆一套，用户会以为它们能各管各的，实际上点主 CTA 的「暂停」
+                 * 和点那一行的暂停打的是同一条命令。
+                 *
+                 * 所以下载中 / 暂停态一律回到默认文案（「下载适配版本」或
+                 * 「打开原始安装包链接」）。**保留**的是安装相关的那几态：
+                 * 确认安装 / 已安装 / 需要去开权限 —— 那些不是下载状态，
+                 * 而且去掉就没法从主按钮装了。
+                 */
                 PrimaryButton(
                     modifier = Modifier.weight(1f),
                     text = when {
+                        downloading -> ctaLabel(context, repo)
                         installStep is InstallStep.Blocked -> stringResource(R.string.detail_cta_blocked)
                         installStep is InstallStep.Done -> stringResource(R.string.detail_cta_done)
-                        // 下载中和暂停态都把主按钮让给这一轮下载：写「下载最佳适配」会让人
-                        // 以为要重新从 0 下一遍，实际语义只是暂停 / 继续
-                        installStep is InstallStep.Downloading ->
-                            stringResource(R.string.download_action_pause)
-                        installStep is InstallStep.Paused ->
-                            stringResource(R.string.download_action_resume)
                         installStep is InstallStep.ReadyToInstall ->
                             stringResource(
                                 R.string.detail_cta_confirm,
@@ -1030,66 +1061,91 @@ fun DetailPanel(
                         else -> ctaLabel(context, repo)
                     },
                     icon = when {
+                        downloading ->
+                            if (repo.dist.desktop || repo.verdict == Verdict.Unknown) {
+                                FiExternal
+                            } else {
+                                FiDownload
+                            }
                         installStep is InstallStep.Blocked -> FiAlert
                         installStep is InstallStep.Done -> FiCheck
                         installStep is InstallStep.Idle ->
                             if (repo.dist.desktop || repo.verdict == Verdict.Unknown) FiExternal else FiDownload
-                        // 下载中 = 这个按钮会暂停，所以给暂停图标；暂停态 = 会继续，所以给刷新。
-                        // 两者共用一个下载箭头时，用户点了确实会停，但完全看不出来 ——
-                        // 于是「没法暂停」这个结论就是这么来的。
-                        installStep is InstallStep.Downloading -> FiPause
-                        installStep is InstallStep.Paused -> FiRefresh
                         else -> FiShield
                     },
-                    // 下载中**不能**禁用：这个状态下点它就是暂停。之前连它一起锁死，
-                    // 前台服务一旦被杀（清缓存 / 被系统回收）用户就既不能取消也不能重来，
-                    // 只能杀进程。真正不能打断的只有校验和提交安装这两段 ——
-                    // 那时打断会留下半截状态。
+                    // 真正不能打断的只有校验和提交安装这两段 ——
+                    // 那时打断会留下半截状态。下载态不禁用：点它会走到下面的守卫，
+                    // 由守卫把话说清楚（而不是静默抢占或静默无反应）。
                     enabled = installStep !is InstallStep.Verifying &&
                         installStep !is InstallStep.CheckingSignature &&
                         installStep !is InstallStep.Installing,
                     onClick = {
+                        if (downloading) {
+                            // 中枢是**单槽**的：新任务会把上一个 job 直接 cancel 掉
+                            // （见 DownloadService.performDownload）。所以这里必须先问清楚
+                            // 有没有别的在跑 —— 直接 startInstall 就会**静默掐断**用户正在下的
+                            // 那个，而且被掐的那一行收不到任何通知，表现为「它莫名其妙停住了」。
+                            val live = DownloadCenter.state.value.assetNameOrNull
+                            onBusyDownload(
+                                if (live == null || live == repo.best?.name) {
+                                    context.getString(R.string.detail_cta_best_downloading)
+                                } else {
+                                    context.getString(R.string.detail_cta_other_downloading)
+                                },
+                            )
+                            return@PrimaryButton
+                        }
                         when (val step = installStep) {
-                            is InstallStep.Downloading -> {
-                                // 暂停**正在下的那个**，不是 repo.best。
-                                //
-                                // 从产物行的按钮起的下载，目标完全可能是另一个产物
-                                // （甚至不是 best）。原来固定暂停 repo.best.name，
-                                // 服务那边匹配不上就什么都不做 —— 表现正是
-                                // 「点了没反应，也确实没法暂停」。
-                                val live = when (val s = DownloadCenter.state.value) {
-                                    is DownloadCenter.Progress.Running -> s.assetName
-                                    is DownloadCenter.Progress.Paused -> s.assetName
-                                    else -> null
-                                } ?: repo.best?.name
-                                live?.let { DownloadCenter.pause(context, it) }
-                            }
-
-                            // 暂停 = 继续下载。走的是同一条前台服务链路，续传由服务负责
-                            is InstallStep.Paused -> {
-                                startInstall(
-                                    context, install, downloads, repo, scope, onOpenRelease, onDownloaded,
-                                    onPublished = onLibraryChanged,
-                                )
-                            }
-
                             is InstallStep.ReadyToInstall -> {
                                 val current = DownloadCenter.state.value
+                                // 文件路径的来源必须是**盘上清单**，进程内存只能当快路径。
+                                //
+                                // 原来只认 `DownloadCenter.Progress.Ready.file`，而中枢是 `object`，
+                                // 进程一死就归零。于是「杀进程 → 重开 → 点确认安装」必然拿到 null，
+                                // 直接判成「下载结果没了」—— 可包好好地躺在公共下载目录里，
+                                // 清单里也有它的真实盘名。用户看到的正是「下载完了还是装不上」。
+                                //
+                                // 清单是落盘的，进程死了它还在；`displayName` 是 MediaStore 回读的
+                                // **盘上实际名字**，拼 `publicDir()` 才是真的路径。
                                 val file = (current as? DownloadCenter.Progress.Ready)?.file
+                                    ?: library.firstOrNull {
+                                        it.repoName == repo.id && it.assetName == repo.best?.name
+                                    }?.let { entry ->
+                                        File(ApkStore.publicDir(), entry.displayName)
+                                            .takeIf { it.exists() && it.length() > 0L }
+                                    }
                                 android.util.Log.i(
                                     "FitHubInstall",
                                     "点击确认安装，当前 DownloadCenter=" +
                                         current::class.simpleName + " file=" + file,
                                 )
                                 if (file == null) {
-                                    // 上一次下载结果没了（进程被杀、缓存被清）。不能顺着
-                                    // 上一状态假装能装，退回 Idle 让用户重新走一次。
+                                    // 清单里也没有、盘上也确实没有：这次是真的下没了。
+                                    // 退回 Idle 让用户重新走一次。
                                     install.value = InstallStep.Failed(
                                         context.getString(R.string.install_error_result_lost),
                                     )
                                     DownloadCenter.reset()
                                 } else {
                                     install.value = InstallStep.Installing
+                                    // 超时兜底。
+                                    //
+                                    // Installing 是唯一一个「按钮被禁用、又没有任何退出路径」的
+                                    // 状态：它的唯一出口是系统安装器那条 PendingIntent 回调。
+                                    // 那一发不来（ROM 吞掉、安装器被杀、装的就是本 App 自己），
+                                    // 按钮就永久灰死在这里 —— 用户既不能重试也不能取消，
+                                    // 只能杀进程重来。实测在 Android 16 模拟器上就会卡住。
+                                    //
+                                    // 到点还没回调就退成 Failed，而 Failed 的点击分支会复位到
+                                    // Idle 并清掉中枢，等于给了一条自救路径。
+                                    scope.launch {
+                                        delay(INSTALL_CALLBACK_TIMEOUT_MS)
+                                        if (install.value is InstallStep.Installing) {
+                                            install.value = InstallStep.Failed(
+                                                context.getString(R.string.install_error_no_callback),
+                                            )
+                                        }
+                                    }
                                     ApkInstaller.install(context, file) { ok, msg ->
                                         // 回调在 binder 线程上，状态必须切回主线程改
                                         scope.launch {
@@ -1158,48 +1214,21 @@ fun DetailPanel(
                 )
 
                 /*
-                 * 取消按钮在下载**进行中**也必须出现。
+                 * 主 CTA 旁边**不再**挂取消按钮 —— 还原成只有主按钮的样子。
                  *
-                 * 之前只有暂停态才有出口（还是塞在进度卡里的一对胶囊），于是
-                 * 「正在下载」时 App 里一个取消都没有 —— 只剩通知栏那条。想中止一个
-                 * 大文件只能先暂停、才能找到取消，而暂停本身又因为图标不变而看不出来。
-                 *
-                 * 用 AnimatedVisibility 而不是直接 if：按钮凭空出现会让手指落空，
-                 * 淡入的同时主按钮收窄，两者的位置变化是连续的。
+                 * 取消和暂停都已经搬到产物行自己的按钮上了：开始下载之后，
+                 * 取消以独立按钮的形式出现在那一行的下载按钮**右侧**（带图标、有过渡），
+                 * 而暂停/继续是那个圆环中心新加的图标。主 CTA 对应的就是 best 那一行，
+                 * 两边本来就指向同一个产物，挂在两处只会让人以为它们能各管各的。
                  */
-                val cancellable = installStep is InstallStep.Downloading ||
-                    installStep is InstallStep.Paused
-                AnimatedVisibility(
-                    visible = cancellable,
-                    enter = fadeIn(tween(200)) + expandHorizontally(tween(200)),
-                    exit = fadeOut(tween(160)) + shrinkHorizontally(tween(160)),
-                ) {
-                    com.heiyehk.fithub.ui.components.IconCircleButton(
-                        icon = FiClose,
-                        contentDescription = stringResource(R.string.download_action_cancel),
-                        onClick = {
-                            // 同暂停：取消也要打**正在下的那个**，否则从产物行起的
-                            // 下载按主按钮取消不掉 —— 看着就是这个按钮没用
-                            val live = when (val s = DownloadCenter.state.value) {
-                                is DownloadCenter.Progress.Running -> s.assetName
-                                is DownloadCenter.Progress.Paused -> s.assetName
-                                else -> null
-                            } ?: repo.best?.name
-                            live?.let {
-                                DownloadCenter.cancel(context, it)
-                                downloads.remove(it)
-                            }
-                            DownloadCenter.reset()
-                            install.value = InstallStep.Idle
-                        },
-                    )
-                }
                 }
                 Spacer(Modifier.height(10.dp))
                 MetaRow(horizontalArrangement = Arrangement.Center) {
                     val best = repo.best
                     when {
-                        installStep !is InstallStep.Idle ->
+                        // 下载态不进主按钮，也不占这行 ——
+                        // 进度和控制在产物行上，这里再报一次「下载中 36%」只是重复。
+                        installStep !is InstallStep.Idle && !downloading ->
                             Text(installStep.stageLabel(context), style = MonoMeta, color = p.ink3)
 
                         best != null && repo.device !is DeviceState.SigningConflict -> {
@@ -1238,97 +1267,6 @@ fun DetailPanel(
         }
     }
 }
-
-@Composable
-private fun InstallProgress(
-    step: InstallStep,
-    onResume: () -> Unit = {},
-    onCancel: () -> Unit = {},
-) {
-    val p = FitTheme.palette
-    val bad = step is InstallStep.Blocked || step is InstallStep.Failed
-    // 暂停用中性色：绿色是「在推进」，红色是「出错了」，停下来的下载两者都不是，
-    // 套其中任何一个都会让用户以为事情还在往前走 / 已经完蛋了。
-    val tone = when {
-        bad -> FitTone.Bad
-        step is InstallStep.Paused -> FitTone.Muted
-        else -> FitTone.Ok
-    }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = DetailMetrics.sidePad, vertical = 12.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(p.toneBg(tone))
-            .padding(14.dp),
-    ) {
-        // 这里只留图标和进度条，文字一律交给 CTA 下方那行 stageLabel。
-        // 之前两个地方渲染的是同一个 stageLabel，于是底部同时出现
-        // 「下载中 15% · 5.0 MB/s · 15%」—— 同一个数字说两遍，还拼成一句读不通的话。
-        MetaRow {
-            when {
-                bad -> Icon(FiAlert, null, tint = p.toneFg(FitTone.Bad), modifier = Modifier.size(14.dp))
-                step is InstallStep.Done -> Icon(FiCheck, null, tint = p.toneFg(FitTone.Ok), modifier = Modifier.size(14.dp))
-                // 停住了就别再转：转着的环会被读成「还在下」
-                step is InstallStep.Paused -> Icon(
-                    FiDownload,
-                    null,
-                    tint = p.ink3,
-                    modifier = Modifier.size(14.dp),
-                )
-                else -> CircularProgress(
-                    // 14dp / 2dp 的环在手机上是一根几乎看不见的细丝，
-                    // 深色底上尤其糊 —— 放大加粗才读得出「还差多少」。
-                    progress = step.progressFraction,
-                    size = 20.dp,
-                    color = p.accent,
-                    stroke = 3.dp,
-                )
-            }
-        }
-        Spacer(Modifier.height(9.dp))
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(CircleShape)
-                .background(p.surface.copy(alpha = 0.7f)),
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth(step.progressFraction.coerceIn(0f, 1f))
-                    .height(4.dp)
-                    .clip(CircleShape)
-                    .background(if (bad) p.toneFg(FitTone.Bad) else if (step is InstallStep.Paused) p.ink4 else p.accent),
-            )
-        }
-        if (step is InstallStep.Blocked) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                stringResource(R.string.detail_install_blocked_explain),
-                style = FitTypography.bodySmall,
-                color = p.ink3,
-            )
-        }
-        // 暂停态把两个出口都摆在眼前。主按钮虽然也写着「继续」，但一个按钮只给得出
-        // 一个动作；没有取消的话，半路停下来的下载就没地方了结。
-        if (step is InstallStep.Paused) {
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PillAction(stringResource(R.string.download_action_resume), p.accent, onResume)
-                PillAction(stringResource(R.string.download_action_cancel), p.ink4, onCancel)
-            }
-        }
-    }
-}
-
-/**
- * 跳到「安装未知来源应用」的授权页。
- *
- * 实现挪到了 [ApkInstaller.openPermissionSettings]：通知栏那条安装入口
- * （[com.heiyehk.fithub.MainActivity]）也得跳同一页，两边各写一份的话
- * 一定会有一边漏掉 —— 漏掉的那边只弹一句 toast，用户没有能解决的入口。
- */
 private fun openInstallPermissionSettings(context: Context) =
     ApkInstaller.openPermissionSettings(context)
 
@@ -1916,11 +1854,26 @@ private fun TabBar(selected: DetailTab, onSelect: (DetailTab) -> Unit) {
                 // 不设这个对齐的话短横会贴文字左缘，看起来就是「没居中」。
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(
-                    stringResource(entry.labelRes),
-                    style = if (active) FitTypography.titleSmall else FitTypography.titleSmall.copy(fontWeight = FontWeight.Normal),
-                    color = if (active) p.ink else p.ink4,
-                )
+                // 四个 tab 必须坐在同一条基线上。
+                //
+                // 选中项是 Medium 字重、未选中是 Normal，两者的字体度量不一样，
+                // 行盒高度也就不同；Column 从顶部往下排，于是**加粗那个的基线更低**，
+                // 旁边三个看起来就「浮高」了。textStyle 里 lineHeight 相同也救不了 ——
+                // 那是行高，不是字形的实际高度。
+                //
+                // 套一个**等高 Box** 再垂直居中：对齐就与字重、与字体回退都无关了。
+                // 不能直接把高度写在 Text 上 —— 那样会把粗体字形裁掉。
+                Box(Modifier.height(19.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        stringResource(entry.labelRes),
+                        style = if (active) {
+                            FitTypography.titleSmall
+                        } else {
+                            FitTypography.titleSmall.copy(fontWeight = FontWeight.Normal)
+                        },
+                        color = if (active) p.ink else p.ink4,
+                    )
+                }
                 Spacer(Modifier.height(7.dp))
                 Box(
                     Modifier
@@ -2209,9 +2162,29 @@ private fun AssetRow(
                     Spacer(Modifier.height(3.dp))
                     Text("sha256 ${asset.sha}", style = MonoMeta, color = p.ink4, maxLines = 1)
                 }
-                asset.reason?.let {
+                /*
+                 * 适配理由：**不是每行都该喊，而且更不该用红色喊**。
+                 *
+                 * 原来无条件渲染，且一律 `FitTone.Bad`。于是列表里二十个
+                 * 「文件名里看不出 ABI。下载之后会用 PackageManager 读真实结果。」
+                 * 排成一列红字 —— 而同一句话就在上面的 VerdictCard 里已经说过一遍，
+                 * 同一个意思说了 N+1 遍。红色在这里也不成立：
+                 * 这些行的 fit 是 **Degrade（可降级）**，不是装不上。
+                 *
+                 * 现在的规矩：
+                 * - Degrade：不说。它不是错误，上面的卡片已经解释过。
+                 * - Mismatch：说，但用中性灰 —— 左边那行「不匹配」徽标才是告警本体，
+                 *   这里只是把**为什么**补上，重复红色只会盖过真正的告警。
+                 * - 整行 dimmed（fit 是 Mismatch/Unknown）本来就是半透明，
+                 *   不该再叠一层红。
+                 */
+                if (asset.reason != null && asset.fit == FitState.Mismatch) {
                     Spacer(Modifier.height(6.dp))
-                    Text(explainText(it), style = FitTypography.bodySmall, color = p.toneFg(FitTone.Bad))
+                    Text(
+                        explainText(asset.reason),
+                        style = FitTypography.bodySmall,
+                        color = p.ink3,
+                    )
                 }
                 asset.parseError?.let {
                     Spacer(Modifier.height(6.dp))
@@ -2234,17 +2207,29 @@ private fun AssetRow(
                         primary = primary,
                         onClick = onClick,
                     )
-                }
-                // 取消只在「真的有一个下载在跑 / 停着」时才出现。
-                // 没有东西可取消的时候摆一个灰色「取消」，用户点下去只会发现什么也没发生。
-                if (state is DownloadState.Running || state is DownloadState.Paused) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        stringResource(R.string.download_action_cancel),
-                        style = FitTypography.labelSmall,
-                        color = p.ink4,
-                        modifier = Modifier.tap { onCancel() }.padding(horizontal = 4.dp),
-                    )
+                    // 取消：**开始下载之后**出现在按钮**右侧**，它自己是个按钮、自带图标。
+                    //
+                    // 原来是一行灰色小字挂在圆的下面 —— 不算按钮（没有按下反馈）、没有图标、
+                    // 位置还在圆的下方，眼睛要往下挪一次才能找到。
+                    //
+                    // 用 AnimatedVisibility 而不是直接 if：凭空冒出来会让手指落空，
+                    // 淡入 + 横向展开，主按钮被推开的过程是连续的。
+                    AnimatedVisibility(
+                        visible = state is DownloadState.Running ||
+                            state is DownloadState.Paused,
+                        enter = fadeIn(tween(200)) + expandHorizontally(tween(200)),
+                        exit = fadeOut(tween(160)) + shrinkHorizontally(tween(160)),
+                    ) {
+                        Spacer(Modifier.width(8.dp))
+                        IconCircleButton(
+                            icon = FiClose,
+                            contentDescription = stringResource(
+                                R.string.download_action_cancel
+                            ),
+                            onClick = onCancel,
+                            size = if (primary) 34.dp else 30.dp,
+                        )
+                    }
                 }
             }
         }
@@ -2276,12 +2261,14 @@ private fun DownloadButton(
     val p = FitTheme.palette
     val size = if (primary) 44.dp else 38.dp
     val live = state is DownloadState.Running || state is DownloadState.Paused
-    // 「下一步」才有实心底：NONE（不是安装包、装不了）画成实心主色会诱使人去按
+    // 「下一步」才有实心底：NONE（不是安装包、装不了）画成实心主色会诱使人去按。
+    // **主行是白底不是黑底** —— 之前写 `p.ink`，一排里最该点的那个按钮反而是块黑疙瘩，
+    // 在浅色页面里砸出一个洞，也和「只有装好的那一行才配主色强调」的意图相反。
     val solid = action == ApkAction.INSTALL || action == ApkAction.OPEN
     val bg by animateColorAsState(
         targetValue = when {
             solid -> p.accent
-            primary -> p.ink
+            primary -> p.surface
             else -> Color.Transparent
         },
         animationSpec = tween(FitMotion.FADE_MS),
@@ -2304,7 +2291,9 @@ private fun DownloadButton(
             .background(bg)
             .then(
                 when {
-                    solid || primary -> Modifier
+                    solid -> Modifier
+                    // 白底在浅色画布上是隐形的，得给一圈发丝线才看得出这是个按钮
+                    primary -> Modifier.border(BorderStroke(1.dp, p.hairline), CircleShape)
                     // 跑着 / 停着时这一圈是描边，不是禁用：它按得动（暂停 / 继续），
                     // 只是含义随状态变。用发丝色画会和不可点的按钮长得一模一样。
                     live -> Modifier.border(
@@ -2334,21 +2323,36 @@ private fun DownloadButton(
                 }
                 // Running / Paused 共用同一个环：位置照实留着，用户才知道停在百分之几。
                 // 区别只在颜色 —— 停住的用灰，一眼能看出它不再往前走了。
-                val ring = if (state is DownloadState.Paused) p.ink4 else if (primary) p.surface else p.accent
-                Canvas(Modifier.fillMaxSize().padding(3.dp)) {
-                    drawArc(
-                        color = p.hairline,
-                        startAngle = -90f,
-                        sweepAngle = 360f,
-                        useCenter = false,
-                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
-                    )
-                    drawArc(
-                        color = ring,
-                        startAngle = -90f,
-                        sweepAngle = 360f * frac,
-                        useCenter = false,
-                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+                //
+                // 颜色跟着底色走：底是白/透明，环就得是**主题色**本身。原来主行底是黑的、
+                // 环用 `p.surface`（近白）才压得住，改成白底之后还这么配就成了
+                // 「白底上一圈白环」，等于没画。
+                val ring = if (state is DownloadState.Paused) p.ink4 else p.accent
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Canvas(Modifier.fillMaxSize().padding(2.5.dp)) {
+                        // 2dp 的弧在这个尺寸下细得几乎看不出走了多少，加粗到 3.5dp
+                        drawArc(
+                            color = p.hairline,
+                            startAngle = -90f,
+                            sweepAngle = 360f,
+                            useCenter = false,
+                            style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round),
+                        )
+                        drawArc(
+                            color = ring,
+                            startAngle = -90f,
+                            sweepAngle = 360f * frac,
+                            useCenter = false,
+                            style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round),
+                        )
+                    }
+                    // 环心必须有个图标，否则「暂停」和「继续」两个状态画出来是同一个圆，
+                    // 用户按之前根本不知道这一下会干什么。跑着 = 暂停，停着 = 继续。
+                    Icon(
+                        if (state is DownloadState.Paused) FiRefresh else FiPause,
+                        contentDescription = actionLabel,
+                        tint = ring,
+                        modifier = Modifier.size(if (primary) 15.dp else 13.dp),
                     )
                 }
             }
@@ -2364,9 +2368,9 @@ private fun DownloadButton(
                     ApkAction.DOWNLOAD -> FiDownload
                 },
                 contentDescription = actionLabel,
-                // 底色是实心的（主色）时图标必须用浅色，否则深色图标压在主色上看不清。
-                // 之前只判 primary，于是非主行的「安装 / 打开」是深图标压主色底
-                tint = if (solid || primary) p.surface else if (action == ApkAction.NONE) p.ink4 else p.ink2,
+                // 底色是实心主色时图标才翻成浅色。主行现在是**白底**，深图标压白底正好，
+                // 再跟着 primary 翻成浅色就等于白底白图标，什么都看不见。
+                tint = if (solid) p.surface else if (action == ApkAction.NONE) p.ink4 else p.ink2,
                 modifier = Modifier.size(if (primary) 19.dp else 17.dp),
             )
         }

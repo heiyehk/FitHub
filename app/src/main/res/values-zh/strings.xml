@@ -153,6 +153,8 @@
     <string name="detail_cta_conflict">下载并查看卸载步骤</string>
     <string name="detail_cta_best">下载适配版本 · %1$s</string>
     <string name="detail_cta_all">查看全部产物 · %1$d 个</string>
+    <string name="detail_cta_best_downloading">这个版本正在下载，暂停和取消在上面它自己那一行里</string>
+    <string name="detail_cta_other_downloading">另一个版本正在下载，先去它那一行暂停或取消</string>
     <string name="detail_sha_partial">sha256 %1$s…（下载后复算并显示完整值）</string>
     <string name="detail_sha_pending">下载后计算 SHA-256 供你核对</string>
     <string name="detail_conflict_hint">签名不同，必须先卸载旧版再装</string>
@@ -633,6 +635,7 @@
     <string name="install_ok">已安装</string>
     <string name="install_error_rejected">系统拒绝了这次安装</string>
     <string name="install_error_installer_failed">调起系统安装器失败</string>
+    <string name="install_error_no_callback">安装器没有回传结果，点一下重试</string>
 
     <string name="pref_mirror">下载源</string>
     <string name="pref_mirror_pick">从哪里拉取 release 文件</string>

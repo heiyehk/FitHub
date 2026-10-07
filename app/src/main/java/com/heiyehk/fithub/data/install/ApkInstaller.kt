@@ -98,7 +98,27 @@ object ApkInstaller {
         pending.set(onResult)
         try {
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                .apply { setSize(apk.length()) }
+                .apply {
+                    setSize(apk.length())
+                    // **必须显式表态「需要用户确认」。**
+                    //
+                    // Android 11+ 要求调用方写清楚要不要用户动作，不写就是 UNSPECIFIED，
+                    // 由系统自决。实测在这台设备上自决的结果是：安装器进程起来了
+                    // （会话里 `mBridges=1`），但既不弹界面也不回调，会话永远停在
+                    // `mFinalStatus=PENDING` / `mSessionApplied=false`，
+                    // 界面上则卡在「正在交给系统安装器…」直到天荒地老。
+                    //
+                    // 之前把这现象归咎于镜像的 PackageInstaller 有问题，是判错了 ——
+                    // `markAsSealed` 里那条 `persistent_data_block` 的 ServiceNotFoundException
+                    // 是框架内部吞掉的噪音，会话本身 seal 得干干净净。
+                    //
+                    // 31 才引入这两个常量，更早的版本不需要（11/12 上默认就是弹确认）。
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        setRequireUserAction(
+                            PackageInstaller.SessionParams.USER_ACTION_REQUIRED,
+                        )
+                    }
+                }
             val id = installer.createSession(params)
             installer.openSession(id).use { session ->
                 // fsync 必须在 out **还开着**的时候调。

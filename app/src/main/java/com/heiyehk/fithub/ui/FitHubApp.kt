@@ -1829,6 +1829,7 @@ fun FitHubApp() {
                         // startInstall 的状态机，它们失败了必须自己出声 ——
                         // 漏掉的话就是按钮按下去一点反应都没有
                         onInstallFailed = { reason -> toast(reason) },
+                        onBusyDownload = { reason -> toast(reason) },
                     )
                 }
             }

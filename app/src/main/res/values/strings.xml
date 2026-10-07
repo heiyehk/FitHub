@@ -156,6 +156,8 @@
     <string name="detail_cta_conflict">Download and see the uninstall steps</string>
     <string name="detail_cta_best">Download the fitting build · %1$s</string>
     <string name="detail_cta_all">View all assets · %1$d</string>
+    <string name="detail_cta_best_downloading">This build is downloading. Pause or cancel it on its row above.</string>
+    <string name="detail_cta_other_downloading">Another build is downloading. Pause or cancel it on its row first.</string>
     <string name="detail_sha_partial">sha256 %1$s… (recomputed after the download, full value shown then)</string>
     <string name="detail_sha_pending">SHA-256 is computed after the download so you can check it</string>
     <string name="detail_conflict_hint">Different signature — uninstall the old version before installing</string>
@@ -636,6 +638,7 @@
     <string name="install_ok">Installed</string>
     <string name="install_error_rejected">The system refused this install</string>
     <string name="install_error_installer_failed">Could not hand the package to the system installer</string>
+    <string name="install_error_no_callback">The installer did not report back. Tap to try again.</string>
 
     <string name="pref_mirror">Download source</string>
     <string name="pref_mirror_pick">Where to fetch release files from</string>
