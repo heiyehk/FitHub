@@ -774,7 +774,21 @@ fun FitHubApp() {
                 //
                 // withDownloadedFacts 在这之后：已下载过的产物要按**真实清单**重算适配
                 // 结论，GitHub 那边只给文件名推断的 ABI，那是两回事。
-                active = FitEngine.withDeviceState(d.value).withDownloadedFacts(libraryState)
+                val fresh = FitEngine.withDeviceState(d.value).withDownloadedFacts(libraryState)
+                active = fresh
+
+                // 写回绑定表。
+                //
+                // 本机页走 [open] 的 Repo 重载，而它**刻意不补拉**（省配额），
+                // 直接用 linkBindings 里那份。于是不写回的话：手动刷新拿到的新数据
+                // 只活在 detailState 里，用户「返回 → 再进入」又被换回扫描时的旧快照 ——
+                // 现象是「刷新后显示 0.0.11，再进又只显示 0.0.1-0.0.10」。
+                //
+                // 顺带也修了 resolveLinks 那句 `if (id 相同) continue`：它让绑定在
+                // 一次解析之后再不更新，而本机页唯一的入口就是这张表。
+                linkBindings.entries.firstOrNull { it.value.id == fullName }?.let { (pkg, _) ->
+                    linkBindings[pkg] = fresh
+                }
             }
             is Async.Err -> {
                 detailState = d
@@ -1409,7 +1423,10 @@ fun FitHubApp() {
                     onRankRetry = { retryRank(it) },
                     onRankRefresh = { refreshRank(it) },
                     refreshingRanks = refreshingRanks,
-                    onRepoTap = { open(it) },
+                    // 占位数据照传：榜行/发现页/搜索都已经在手上有一份 Repo 了，
+                    // 不传的话 open 只能 byId 反查 —— 榜上的仓库不在任何列表里，
+                    // 反查返回 null，面板就得空着等网络（第一次打开卡一下）
+                    onRepoTap = { full, ph -> open(full, placeholder = ph) },
                     onBrowse = { tab = AppTab.Discover },
                     onRefreshOne = { refreshSubscription(it) },
                     onRefreshAll = { refreshAllSubscriptions() },

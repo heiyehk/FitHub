@@ -92,7 +92,14 @@ fun SubscribeScreen(
     onRankRefresh: (RankBoard) -> Unit,
     /** 正在下拉刷新的榜 id。与「加载中」分开：刷新时旧榜留在屏幕上，不该闪成骨架屏 */
     refreshingRanks: Set<String>,
-    onRepoTap: (String) -> Unit,
+    /**
+     * 打开仓库详情。[placeholder] 是调用方手上已有的那份数据，有就传。
+     *
+     * 榜行**必须**传：详情面板靠 `placeholder` 才能立刻出标题 / star / 描述，
+     * 拿不到就得起一个空面板等网络 —— 那正是「第一次打开卡一下」的成因。
+     * 订阅列表那边手上只有 [Subscription]，传 null，走 byId 反查。
+     */
+    onRepoTap: (String, Repo?) -> Unit,
     onBrowse: () -> Unit,
     onRefreshOne: (String) -> Unit,
     onRefreshAll: () -> Unit,
@@ -218,7 +225,14 @@ private fun TabItem(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun SubscriptionsPage(
     subs: List<Subscription>,
-    onRepoTap: (String) -> Unit,
+    /**
+     * 打开仓库详情。[placeholder] 是调用方手上已有的那份数据，有就传。
+     *
+     * 榜行**必须**传：详情面板靠 `placeholder` 才能立刻出标题 / star / 描述，
+     * 拿不到就得起一个空面板等网络 —— 那正是「第一次打开卡一下」的成因。
+     * 订阅列表那边手上只有 [Subscription]，传 null，走 byId 反查。
+     */
+    onRepoTap: (String, Repo?) -> Unit,
     onBrowse: () -> Unit,
     onRefreshOne: (String) -> Unit,
     onRefreshAll: () -> Unit,
@@ -300,7 +314,7 @@ private fun SubscriptionsPage(
             SubscriptionRow(
                 sub = sub,
                 refreshing = sub.fullName in refreshing,
-                onTap = { onRepoTap(sub.fullName) },
+                onTap = { onRepoTap(sub.fullName, null) },
                 onRefresh = { onRefreshOne(sub.fullName) },
             )
         }
@@ -343,7 +357,14 @@ private fun RankPage(
     listState: LazyListState,
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
-    onRepoTap: (String) -> Unit,
+    /**
+     * 打开仓库详情。[placeholder] 是调用方手上已有的那份数据，有就传。
+     *
+     * 榜行**必须**传：详情面板靠 `placeholder` 才能立刻出标题 / star / 描述，
+     * 拿不到就得起一个空面板等网络 —— 那正是「第一次打开卡一下」的成因。
+     * 订阅列表那边手上只有 [Subscription]，传 null，走 byId 反查。
+     */
+    onRepoTap: (String, Repo?) -> Unit,
     onToggleFollow: (Repo) -> Unit,
     isFollowing: (String) -> Boolean,
 ) {
@@ -434,7 +455,7 @@ private fun RankPage(
             RankRow(
                 repo = repo,
                 following = isFollowing(repo.id),
-                onTap = { onRepoTap(repo.id) },
+                onTap = { onRepoTap(repo.id, repo) },
                 onToggleFollow = { onToggleFollow(repo) },
             )
         }
