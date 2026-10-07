@@ -258,8 +258,6 @@ fun DetailPanel(
     onShare: () -> Unit,
     onOpenRelease: () -> Unit,
     onInstallDone: () -> Unit,
-    /** 某个安装包真的下到手了。用来补「下载与安装记录」——之前根本没记过 */
-    onDownloaded: (repoId: String, assetName: String, sha: String) -> Unit = { _, _, _ -> },
     /**
      * 「打开」失败要有个出口。
      *
@@ -797,7 +795,6 @@ fun DetailPanel(
                                 repoName = repo.id,
                                 scope = scope,
                                 onNoUrl = onOpenRelease,
-                                onDownloaded = onDownloaded,
                                 onPublished = onLibraryChanged,
                             )
                         }
@@ -833,7 +830,6 @@ fun DetailPanel(
                                             entry = entry,
                                             repo = repo,
                                             scope = scope,
-                                            onDownloaded = onDownloaded,
                                             onInstalled = onLibraryChanged,
                                             onFailed = onInstallFailed,
                                         )
@@ -1204,7 +1200,7 @@ fun DetailPanel(
 
                             is InstallStep.Idle ->
                                 startInstall(
-                                    context, install, downloads, repo, scope, onOpenRelease, onDownloaded,
+                                    context, install, downloads, repo, scope, onOpenRelease,
                                     onPublished = onLibraryChanged,
                                 )
 
@@ -1292,8 +1288,6 @@ private fun startInstall(
     repo: Repo,
     scope: CoroutineScope,
     onNoDownloadUrl: () -> Unit,
-    /** 记一条「下载过这个包」的历史。持久化在宿主那边，这里只给数据 */
-    onDownloaded: (String, String, String) -> Unit = { _, _, _ -> },
     /**
      * 成品已落到公共下载目录。
      *
@@ -1363,9 +1357,8 @@ private fun startInstall(
 
             is DownloadCenter.Progress.Ready -> {
                 downloads[asset.name] = DownloadState.Done
-                // 文件确实到手了才记 —— 记在 Ready 而不是点下载那一刻，
-                // 否则失败和中途退出的记录会和真正下好的混在一起
-                onDownloaded(repo.id, asset.name, outcome.sha)
+                // 「下载与安装记录」由 DownloadService 在文件落盘那一刻自己记，
+                // 这里只管刷新按钮三态 —— 记录是那件事的自然结果，不是界面的责任。
                 onPublished()
                 state.value = when {
                     repo.device is DeviceState.SigningConflict -> InstallStep.Blocked(
@@ -1461,7 +1454,6 @@ private fun startDownload(
     repoName: String,
     scope: CoroutineScope,
     onNoUrl: () -> Unit,
-    onDownloaded: (repoId: String, assetName: String, sha: String) -> Unit = { _, _, _ -> },
     /** 成品已经落到公共下载目录、清单也记上了 —— 宿主用它把按钮切成「安装 / 打开」 */
     onPublished: () -> Unit = {},
 ) {
@@ -1521,7 +1513,6 @@ private fun startDownload(
         downloads[asset.name] = when (outcome) {
             is DownloadCenter.Progress.Failed -> DownloadState.Failed(outcome.reason)
             is DownloadCenter.Progress.Ready -> {
-                onDownloaded(repoName, asset.name, outcome.sha)
                 // 文件已经落到公共下载目录、清单也记上了，通知宿主把按钮切成
                 // 「安装 / 打开」—— 不刷新的话这一行还要等进程重启才对
                 onPublished()
@@ -1544,7 +1535,6 @@ private fun installFromFile(
     entry: DownloadedApk,
     repo: Repo,
     scope: CoroutineScope,
-    onDownloaded: (String, String, String) -> Unit,
     onInstalled: () -> Unit,
     onFailed: (String) -> Unit,
 ) {
@@ -1565,7 +1555,6 @@ private fun installFromFile(
         scope.launch {
             if (ok) {
                 ApkLibrary.setInstalled(context, entry.key, true)
-                onDownloaded(repo.id, entry.assetName, entry.sha256)
                 onInstalled()
                 install.value = InstallStep.Done(
                     context.getString(

@@ -6,6 +6,7 @@ import com.heiyehk.fithub.data.remote.ContentEntryDto
 import com.heiyehk.fithub.data.remote.DiscoverSort
 import com.heiyehk.fithub.data.remote.GitHubApi
 import com.heiyehk.fithub.data.remote.GitHubMapper
+import com.heiyehk.fithub.data.remote.ReleaseDto
 import com.heiyehk.fithub.data.remote.ReleasePick
 import com.heiyehk.fithub.data.remote.RateDto
 import com.heiyehk.fithub.data.remote.RepoDto
@@ -47,8 +48,8 @@ class FitRepository(val api: GitHubApi) {
      * （原注释里还提到 manifest 的 homepage —— manifest 早就没有那个字段了，
      * 照着找会找不到。）
      *
-     * 不再是 private：「检查更新」查到新版之后要拿到最新版的安装包直接下载安装，
-     * 而「挑哪个包」的规则在 [GitHubMapper] 里 —— 见 [latestInstallableOfSelf]。
+     * 不再是 private：「检查更新」查到新版之后要拿最新版的安装包直接下载安装，
+     * 而「挑哪个包」的规则在 [GitHubMapper] 里 —— 见 [installableOf]。
      */
     val selfRepo = "heiyehk/FitHub"
 
@@ -114,51 +115,63 @@ class FitRepository(val api: GitHubApi) {
     fun invalidateRank(board: RankBoard) = api.invalidateDiscoverQuery(board.sort, board.query())
 
     /**
-     * 详情：仓库元信息 + 最近 releases。
+     * 查 FitHub 自己最新的那一条 release。「我的 → 检查更新」用。
      *
-     * releases 这一步失败不能当成空列表，原因挂在 `releasesError` 上，
-     * UI 据此写「查不到」。
-     */
-    /**
-     * 查 FitHub 自己最新的 release 版本号。
+     * 本 App 没上任何商店，唯一的更新来源就是仓库 Release，所以就查自己的仓库 ——
+     * 不编造更新源，也不弹假结论。
      *
-     * 「我的 → 检查更新」用。本 App 没上任何商店，唯一的更新来源就是仓库 Release，
-     * 所以就查自己的仓库 —— 不编造更新源，也不弹假结论。
-     *
-     * 走 [detail] 整条链会多花一次仓库元信息请求；这里直接打 releases 接口，
-     * 因为检查更新只需要 tag。
+     * 直接打 releases 接口，不走 [detail] 整条链：后者多花一次仓库元信息请求，
+     * 而这里只需要 release 这一份事实。
      *
      * **必须穿缓存**：这是用户主动发起的「现在有没有新版」，而 releases 在 6 小时内
      * 是命中缓存的。不穿的话「刚查过 → 发了新版 → 再查」会拿到上一次那份并回答
      * 「已是最新」—— 用户明确求真的动作，缓存让它给出一个确定的错误答案。
+     *
+     * 返回**整条** release 而不是光一个 tag：拿 tag 去比版本的那个对象，必须和稍后
+     * 真正下载的那个包是同一个，否则就会复现「提示 v0.0.3、装上 v0.0.2」。见 [installableOf]。
      */
-    suspend fun latestReleaseOfSelf(): Async<String> =
-        when (val r = api.releases(selfRepo, 5, forceRefresh = true)) {
+    suspend fun latestReleaseOfSelf(): Async<ReleaseDto> =
+        when (val r = api.releases(selfRepo, UPDATE_RELEASES_PER_PAGE, forceRefresh = true)) {
             is ApiResult.Ok ->
                 // 用 visible() 而不是 filter(非 draft)：预发布不能被当成「最新版本」
                 ReleasePick.latest(r.value, Prefs.state.value.includePrerelease)
-                    ?.let { Async.Ok(it.tagName) }
+                    ?.let { Async.Ok(it) }
                     ?: Async.Err("这个仓库还没有发布任何可用版本")
 
             is ApiResult.Err -> Async.Err(r.message)
         }
 
     /**
- * 最新 release 里「最该给用户的那一个」产物，供「检查更新 → 直接下载」用。
- *
- * 走 [detail] 而不是再写一遍 releases 拼装：**挑哪个包**的规则（架构匹配优先、
- * 同级里 release 压过 debug / unsigned）已经写在 [GitHubMapper] 里了，
- * 这里自己再挑一次就会出现两套口径，详情页和更新页给出两个不同的包。
- *
- * 返回 null 表示这个 release 里没有能装到本机的产物 —— 调用方要照实说，
- * 不要退回去随便拿一个 APK。
- */
-suspend fun latestInstallableOfSelf(): Async<Asset?> =
-    when (val d = detail(selfRepo)) {
-        is Async.Ok -> Async.Ok(d.value.best)
-        is Async.Err -> Async.Err(d.message)
-        Async.Loading -> Async.Loading
-    }
+     * 从「检查更新」拿到的**那一条** release 里，挑出最该给用户的那一个安装包。
+     *
+     * ## 为什么是纯函数，而不是再问一次
+     *
+     * 原来的实现是 `detail(selfRepo).value.best`，也就是**再问 GitHub 一遍**，
+     * 而那一遍读的是另一条缓存键、而且不穿缓存：
+     *
+     * | 调用方     | perPage | forceRefresh | 缓存键               |
+     * |------------|---------|--------------|----------------------|
+     * | 检查更新   | 5       | **true**     | `releases-<repo>-5`  |
+     * | 原来的下载 | 20      | false        | `releases-<repo>-20` |
+     *
+     * perPage 是刻意留在键里的（见 `GitHubApi.releasesCacheKey`：缓存里存的是**那次
+     * 请求实际返回的条数**），所以检查刚拉回来的新列表写进了 `-5`，而下载读的是
+     * `-20` —— 上一次打开自己仓库详情页时留下的快照。`get()` 又是 stale-while-revalidate：
+     * 盘上只要有文件就立即返回。于是界面上写着「发现新版本 v0.0.3」，装上去的却是
+     * v0.0.2，**没有任何报错**。
+     *
+     * 现在这条函数**不是 suspend**：它拿不到 `api`，也就没有任何一条能读缓存的路。
+     * 比对用的版本和下载用的包从此是同一个对象，而不是两次碰巧一致的结果；
+     * 顺带省掉 2 次请求（仓库元信息 + releases-20）—— 未登录配额只有 60 次/小时。
+     *
+     * 挑包的规则仍然是全局那一份（[GitHubMapper.toAsset] + `pickBest`：架构匹配优先、
+     * 同级里 release 压过 debug / unsigned），不在这里另立一套口径。
+     *
+     * 返回 null 表示这个 release 里没有能装到本机的产物 —— 调用方要照实说，
+     * 不要退回去随便拿一个 APK。
+     */
+    fun installableOf(release: ReleaseDto): Asset? =
+        pickBest(release.assets.map { GitHubMapper.toAsset(it, release) })
 
     /**
  * 列目录。[path] 空串表示仓库根。
@@ -241,6 +254,12 @@ data class FileBody(
     }
 }
 
+    /**
+     * 详情：仓库元信息 + 最近 releases。
+     *
+     * releases 这一步失败不能当成空列表，原因挂在 `releasesError` 上，
+     * UI 据此写「查不到」。
+     */
     suspend fun detail(fullName: String): Async<Repo> {
         val repoDto = api.repo(fullName)
         if (repoDto is ApiResult.Err) return Async.Err(repoDto.message)
@@ -540,5 +559,18 @@ data class FileBody(
          * 预发布（那种情况本来也不该当作正式版来推）。
          */
         const val RELEASES_PER_PAGE = 20
+
+        /**
+         * 「检查更新」一次取几条 release。
+         *
+         * 比 [RELEASES_PER_PAGE] 少，因为这里只需要**第一条**（[ReleasePick.latest]），
+         * 而产物是挂在各自那条 release 上的 —— 不需要为了拿到最新版的包而把
+         * 20 条 release 的全部资产都展开一遍。
+         *
+         * 注意它和 [RELEASES_PER_PAGE] 落在**两条不同的缓存键**上（perPage 在键里），
+         * 所以这一条是刻意独立的、只被检查更新用。下载不再走第二次查询，
+         * 而是用这里返回的那条 release 直接挑包，见 [installableOf]。
+         */
+        const val UPDATE_RELEASES_PER_PAGE = 5
     }
 }

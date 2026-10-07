@@ -17,6 +17,8 @@ import com.heiyehk.fithub.MainActivity
 import com.heiyehk.fithub.R
 import com.heiyehk.fithub.data.Asset
 import com.heiyehk.fithub.data.Env
+import com.heiyehk.fithub.data.HistoryEntry
+import com.heiyehk.fithub.data.HistoryStore
 import com.heiyehk.fithub.data.Mirrors
 import com.heiyehk.fithub.data.Prefs
 import com.heiyehk.fithub.data.parse.ApkParser
@@ -510,6 +512,33 @@ class DownloadService : Service() {
                         abis = manifest?.abis.orEmpty(),
                         debuggable = manifest?.isDebuggable ?: false,
                         manifestRead = manifest != null,
+                        at = System.currentTimeMillis(),
+                    ),
+                )
+
+                // 「下载与安装记录」记在这里，和 [ApkLibrary.record] 挨着 ——
+                // 也就是**每一个**下载的入口都会记到。
+                //
+                // 之前这条记录写在详情面板的 `onDownloaded` 回调里，也就是只有
+                // 「从详情页点下载」这一条路会记。于是「我的 → 检查更新」下的那个包
+                // 明明已经落到下载目录、`ApkLibrary` 也有它，界面上却查不到 ——
+                // 而自更新恰恰是这个 App 里最该被看见、也最该能被管理的一次下载。
+                //
+                // 事实只有一处会发生（文件落到公共目录、摘要算完），所以记录也只写
+                // 在这一处。写在 UI 层就意味着「每多一个下载入口就得多记得一次」，
+                // 而漏掉的那一次不会报错，只是安静地少一条记录。
+                HistoryStore.record(
+                    this@DownloadService,
+                    HistoryEntry(
+                        kind = HistoryEntry.Kind.Downloaded,
+                        // 与 DownloadedApk.key 同一种拼法：记录页就是拿整串去对清单的
+                        // （只比 assetName 会把别的仓库的同名产物挂上来）
+                        ref = "$repo/$name",
+                        title = name,
+                        detail = listOfNotNull(
+                            repo.substringAfterLast('/').takeIf { it.isNotBlank() },
+                            actual.take(8).takeIf { it.isNotBlank() }?.let { "sha $it" },
+                        ).joinToString(" · "),
                         at = System.currentTimeMillis(),
                     ),
                 )

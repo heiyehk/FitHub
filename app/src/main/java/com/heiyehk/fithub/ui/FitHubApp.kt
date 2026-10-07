@@ -1122,10 +1122,14 @@ fun FitHubApp() {
                 }
                 // 补完重新合一次：这一次清单里才有真实事实可显示
                 libraryState = ApkLibrary.list(context)
+                // 「下载与安装记录」也是那时候写的（见 DownloadService），
+                // 顺手重读一次，「已下载 N」那几个计数才不会停在旧数字上
+                history = HistoryStore.list(context)
                 active = active?.withDownloadedFacts(libraryState)
             }
         }
         libraryState = ApkLibrary.list(context)
+        history = HistoryStore.list(context)
         active = active?.withDownloadedFacts(libraryState)
     }
 
@@ -1781,6 +1785,9 @@ fun FitHubApp() {
                     onBack = { closePage() },
                     repo = repo,
                     onToast = { msg, note -> toast(msg, note) },
+                    // 自更新下完的包已经进「下载与安装记录」了（记录写在服务里），
+                    // 这里刷新一下，「我的」那页的计数才当场变
+                    onLibraryChanged = { refreshLibrary() },
                 )
             }
 
@@ -1908,21 +1915,6 @@ fun FitHubApp() {
                             openReleasePage(context, repo) { url ->
                                 toast(context.getString(R.string.toast_no_browser), url)
                             }
-                        },
-                        // 文件真的下到手才记，失败和中途退出的不会混进「下载记录」
-                        onDownloaded = { repoId, assetName, sha ->
-                            recordHistory(
-                                HistoryEntry(
-                                    kind = HistoryEntry.Kind.Downloaded,
-                                    ref = "$repoId/$assetName",
-                                    title = assetName,
-                                    detail = listOfNotNull(
-                                        repoId.substringAfterLast('/').takeIf { it.isNotBlank() },
-                                        sha.take(8).takeIf { it.isNotBlank() }?.let { "sha $it" },
-                                    ).joinToString(" · "),
-                                    at = System.currentTimeMillis(),
-                                )
-                            )
                         },
                         readme = readme,
                         library = libraryState,

@@ -46,10 +46,13 @@ import com.heiyehk.fithub.BuildConfig
 import com.heiyehk.fithub.R
 import com.heiyehk.fithub.data.AppLocale
 import com.heiyehk.fithub.ui.components.GhostButton
+import com.heiyehk.fithub.data.Asset
 import com.heiyehk.fithub.data.Async
+import com.heiyehk.fithub.data.Env
 import com.heiyehk.fithub.data.FitRepository
 import com.heiyehk.fithub.data.Mirrors
 import com.heiyehk.fithub.data.Prefs
+import com.heiyehk.fithub.data.remote.ReleaseDto
 import com.heiyehk.fithub.data.remote.VersionTag
 import com.heiyehk.fithub.ui.icons.FiArrowLeft
 import com.heiyehk.fithub.ui.icons.FiDownload
@@ -412,14 +415,39 @@ fun UpdateScreen(
     onBack: () -> Unit,
     repo: FitRepository,
     onToast: (String, String?) -> Unit,
+    /** 下载完成、宿主刷新「下载与安装记录」和计数 */
+    onLibraryChanged: () -> Unit = {},
 ) {
     var checking by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<Async<String>?>(null) }
+    // 存整条 release 而不是 tag：下载要用**同一个**对象去挑包。
+    // 存 tag 的话下载那一步就得再查一次 releases，而那一次读的是另一条缓存键。
+    var result by remember { mutableStateOf<Async<ReleaseDto>?>(null) }
 
     /** 已经点下「下载并安装」的那个包名。只认自己的那一次进度，别人的下载不管。 */
     var installing by remember { mutableStateOf<String?>(null) }
     var installError by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * 取消是用户自己的动作，**不是**失败。
+     *
+     * 和 [installError] 分开存：塞进去的话界面会写「安装没成功：已取消」——
+     * 用户明明是自己按的取消，却被告知自己搞砸了安装，而且这句话还挂在页面上
+     * 不走。「已取消」只是一次性的回执，说完就该消失。
+     */
+    var cancelled by remember { mutableStateOf(false) }
     var installed by remember { mutableStateOf(false) }
+
+    /**
+     * 挑包**没有**再发请求。
+     *
+     * 原来这里是 `repo.latestInstallableOfSelf()`，它走 `detail()` 重新查一遍
+     * releases（perPage=20、不穿缓存），于是拿到的可能是上次打开自己仓库详情页时
+     * 的旧列表 —— 界面提示 v0.0.3，装上去却是 v0.0.2，且全程无报错。
+     * 现在从检查结果那一条 release 直接挑，比较用的和下载用的必然是同一个版本。
+     */
+    val picked: Asset? = remember(result) {
+        (result as? Async.Ok)?.value?.let { repo.installableOf(it) }
+    }
 
     val scope = rememberCoroutineScope()
     val p = FitTheme.palette
@@ -435,6 +463,8 @@ fun UpdateScreen(
         when (val st = download) {
             is DownloadCenter.Progress.Ready -> if (st.assetName == mine) {
                 installing = null
+                // 文件到位了，宿主那边刷新一下记录页和计数
+                onLibraryChanged()
                 ApkInstaller.install(context, st.file) { ok, message ->
                     scope.launch {
                         if (ok) {
@@ -443,7 +473,11 @@ fun UpdateScreen(
                             installError = if (message == ApkInstaller.NEEDS_PERMISSION) {
                                 context.getString(R.string.install_error_no_permission)
                             } else {
-                                context.getString(R.string.install_error_failed, message)
+                                // 直接用原因本身，**不要**再套 install_error_failed。
+                                // 渲染处已经用 info_update_install_failed 带了「安装没成功：」，
+                                // 两层都这么写的话，界面上会是
+                                // 「安装没成功：没装上：这个包签名不同」——同一句话说三遍。
+                                message
                             }
                             // 系统安装器已经接管，把通知栏那条撤掉 ——
                             // 否则会同时留着「下载完成」和「安装失败」两条
@@ -455,7 +489,14 @@ fun UpdateScreen(
 
             is DownloadCenter.Progress.Failed -> if (st.assetName == mine) {
                 installing = null
-                installError = st.reason
+                // 用户自己按的取消也走 Failed（服务只有这一个终局出口），
+                // 但它不是失败 —— 说成「安装没成功：已取消」是在指责用户搞砸了安装。
+                // 这里已经由取消按钮置位了，别让服务的回执把它盖回去。
+                if (cancelled) {
+                    installError = null
+                } else {
+                    installError = st.reason
+                }
             }
 
             else -> Unit
@@ -483,7 +524,7 @@ fun UpdateScreen(
                         val r = result
                         when (r) {
                             is Async.Ok -> {
-                                val latest = r.value
+                                val latest = r.value.tagName
                                 // 按版本号比，不是字符串相等 —— 见 VersionTag 的注释：
                                 // tag 带 v 前缀时字符串相等恒为 false，会永远报「新版本」。
                                 val cmp = VersionTag.compare(latest, BuildConfig.VERSION_NAME)
@@ -537,7 +578,8 @@ fun UpdateScreen(
             is Async.Ok -> {
                 Spacer(Modifier.height(18.dp))
                 InfoHeading(stringResource(R.string.info_update_h_result))
-                val cmp = VersionTag.compare(r.value, BuildConfig.VERSION_NAME)
+                val latestTag = r.value.tagName
+                val cmp = VersionTag.compare(latestTag, BuildConfig.VERSION_NAME)
                 when {
                     cmp == 0 -> InfoPara(stringResource(R.string.info_update_same, BuildConfig.VERSION_NAME))
 
@@ -548,7 +590,7 @@ fun UpdateScreen(
                             stringResource(
                                 R.string.info_update_local_newer_para,
                                 BuildConfig.VERSION_NAME,
-                                r.value,
+                                latestTag,
                             ),
                         )
                         InfoPara(stringResource(R.string.info_update_source_only))
@@ -556,9 +598,32 @@ fun UpdateScreen(
 
                     else -> {
                         InfoPara(
-                            stringResource(R.string.info_update_compare, r.value, BuildConfig.VERSION_NAME),
+                            stringResource(R.string.info_update_compare, latestTag, BuildConfig.VERSION_NAME),
                         )
                         InfoPara(stringResource(R.string.info_update_source_only))
+
+                        // 走哪个下载源要写出来，而不是让用户自己记得。
+                        //
+                        // 代理是**用户自己选的**（我的 → 下载源），但下载时通知栏只写
+                        // 「via mirror gh-proxy」那一瞬；这一页是用户按下按钮前最后能看到
+                        // 说明的地方，不写就等于要他去设置页里回忆自己选了什么。
+                        val mirrorId = remember { Prefs.mirrorId(context) }
+                        val mirror = Mirrors.BY_ID[mirrorId]
+                        InfoPara(
+                            if (mirror != null && mirror.isThirdParty) {
+                                context.getString(
+                                    R.string.info_update_via_mirror,
+                                    mirror.id,
+                                    if (Prefs.mirrorAutoFallback(context)) {
+                                        context.getString(R.string.info_update_mirror_auto)
+                                    } else {
+                                        context.getString(R.string.info_update_mirror_single)
+                                    },
+                                )
+                            } else {
+                                stringResource(R.string.info_update_via_direct)
+                            },
+                        )
                         Spacer(Modifier.height(14.dp))
                         /*
                          * 只在这一档给按钮。
@@ -566,61 +631,122 @@ fun UpdateScreen(
                          * 「已是最新」给了没处可去，「本机更新」给了是骗人 ——
                          * 那两个版本号说明用户装的就是更新的构建，让他去装个更旧的
                          * 没有任何道理。空状态给下一步动作，但不等于每一档都给。
+                         *
+                         * 按钮要能在下载途中切换成暂停/继续/取消：自更新是几十 MB 的
+                         * 文件，用户按下之后唯一能做的事就是盯着它下完或者停掉它。
+                         * 原来这里只有 `enabled = !busy`，于是整个下载过程在界面上
+                         * 是一个按不动的按钮，只能退回通知栏去停 —— 而这一页自己
+                         * 触发的下载，用户没理由还要再跳出去找那个出口。
                          */
-                        val busy = installing != null
-                        GhostButton(
-                            text = when {
-                                busy -> stringResource(R.string.info_update_downloading)
-                                else -> stringResource(R.string.info_update_go)
-                            },
-                            onClick = {
-                                scope.launch {
-                                    // 先要文件再起下载：用户按的是「装最新版」，
-                                    // 不是「随便下一个」，所以宁可多花一次请求把包选对，
-                                    // 也不能下到一个装不上的。
-                                    when (val a = repo.latestInstallableOfSelf()) {
-                                        is Async.Ok -> {
-                                            val asset = a.value
-                                            if (asset?.downloadUrl.isNullOrBlank()) {
-                                                installError = context.getString(
-                                                    R.string.info_update_no_asset,
-                                                )
-                                                return@launch
-                                            }
-                                            installError = null
-                                            installed = false
-                                            installing = asset!!.name
-                                            DownloadCenter.enqueue(
-                                                context,
-                                                asset.downloadUrl,
-                                                asset,
-                                                repo.selfRepo,
-                                            )
-                                        }
+                        val mine = installing
+                        val running = download.assetNameOrNull == mine
+                        val paused = (download as? DownloadCenter.Progress.Paused)?.assetName == mine
+                        val busy = mine != null
 
-                                        is Async.Err -> installError = a.message
-                                        Async.Loading -> Unit
+                        if (!busy) {
+                            GhostButton(
+                                text = stringResource(R.string.info_update_go),
+                                onClick = {
+                                    // 包已经在检查结果里了，这里不再发任何请求：
+                                    // 再查一次就是给「提示的版本」和「下载的版本」
+                                    // 制造分岔的机会（见 picked 的注释）。
+                                    val asset = picked
+                                    if (asset?.downloadUrl.isNullOrBlank()) {
+                                        installError = context.getString(R.string.info_update_no_asset)
+                                        return@GhostButton
                                     }
-                                }
-                            },
-                            enabled = !busy,
-                            icon = if (busy) null else FiDownload,
-                        )
-                        // 进度。下载走的是前台服务，通知栏里也有，这里给的是
-                        // 留在这一页时的反馈 —— 数字来自同一个 StateFlow，不是另一份。
-                        val frac = (download as? DownloadCenter.Progress.Running)
-                            ?.let { if (it.total > 0) it.bytes.toFloat() / it.total else 0f }
-                        if (busy && frac != null) {
-                            Spacer(Modifier.height(10.dp))
-                            Text(
-                                "${(frac * 100).toInt()}%",
-                                style = FitTypography.titleSmall,
-                                color = p.ink2,
+                                    installError = null
+                                    installed = false
+                                    // 重新开始就是否定了上一轮的取消 ——
+                                    // 否则「已取消」会一直挂在结果区，看着像刚失败过
+                                    cancelled = false
+                                    installing = asset.name
+                                    DownloadCenter.enqueue(
+                                        context,
+                                        asset.downloadUrl,
+                                        asset,
+                                        repo.selfRepo,
+                                    )
+                                },
+                                icon = FiDownload,
                             )
+                        } else {
+                            // 进行中：暂停/继续 + 取消。两者都要，因为「暂停」保住
+                            // .part 可以续传，而「取消」要把半截文件删掉、真的停下来。
+                            val st = download
+                            val pctText = when (st) {
+                                is DownloadCenter.Progress.Running ->
+                                    if (st.total > 0) {
+                                        "${(st.bytes * 100 / st.total).toInt()}% · " +
+                                            "${Env.formatSize(st.bytes / 1_048_576.0)} / " +
+                                            Env.formatSize(st.total / 1_048_576.0) +
+                                            (if (st.speed.isNotBlank()) " · ${st.speed}" else "")
+                                    } else {
+                                        Env.formatSize(st.bytes / 1_048_576.0)
+                                    }
+
+                                is DownloadCenter.Progress.Paused ->
+                                    context.getString(
+                                        R.string.info_update_paused_at,
+                                        Env.formatSize(st.saved / 1_048_576.0),
+                                    )
+
+                                DownloadCenter.Progress.Verifying ->
+                                    stringResource(R.string.install_stage_verifying)
+
+                                else -> ""
+                            }
+                            if (pctText.isNotBlank()) {
+                                Text(pctText, style = MonoMeta, color = p.ink4)
+                                Spacer(Modifier.height(10.dp))
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                GhostButton(
+                                    text = stringResource(
+                                        if (paused) R.string.download_resume else R.string.download_pause,
+                                    ),
+                                    onClick = {
+                                        val name = mine ?: return@GhostButton
+                                        if (paused) {
+                                            // 继续 = 重新入队：`.part` 还在盘上，
+                                            // 服务会用 Range 请求接着往下写。
+                                            val asset = picked
+                                            if (asset?.downloadUrl.isNullOrBlank()) {
+                                                installError = context.getString(R.string.info_update_no_asset)
+                                                return@GhostButton
+                                            }
+                                            DownloadCenter.resume(context, asset.downloadUrl, asset, repo.selfRepo)
+                                        } else {
+                                            DownloadCenter.pause(context, name)
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                GhostButton(
+                                    text = stringResource(R.string.download_cancel),
+                                    onClick = {
+                                        val name = mine ?: return@GhostButton
+                                        DownloadCenter.cancel(context, name)
+                                        // 终局不一定还回来（服务可能正被杀），
+                                        // 本地先放手，否则按钮永远卡在「下载中」。
+                                        installing = null
+                                        cancelled = true
+                                        installError = null
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
                         }
                         if (installError != null) {
                             Spacer(Modifier.height(10.dp))
                             InfoPara(stringResource(R.string.info_update_install_failed, installError!!))
+                        }
+                        if (cancelled) {
+                            Spacer(Modifier.height(10.dp))
+                            InfoPara(stringResource(R.string.download_cancelled))
                         }
                         if (installed) {
                             Spacer(Modifier.height(10.dp))
