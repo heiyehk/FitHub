@@ -433,9 +433,13 @@ private fun EmptyResult(title: String, hint: String) {
  *
  * 只列 GitHub 搜索语法，点一下原样透传给 search API，
  * 展示的每一条都是接口返回的结果。
+ *
+ * 原本第一条是 `has:release`，已删。**GitHub 仓库搜索没有这个限定符** ——
+ * 输入它不会报错、不过滤、也不提示（实测：加与不加结果数完全相同），
+ * 等于在教用户一个假语法。真正的「有安装包」只能逐仓库查 /releases，
+ * 搜索框给不了。理由与实测数据见 `FitRepository.baseQuery` 的注释。
  */
 private val SYNTAX_HINTS = listOf(
-    "has:release" to R.string.search_syntax_release,
     "language:kotlin" to R.string.search_syntax_language,
     "topic:compose" to R.string.search_syntax_topic,
     "stars:>5000" to R.string.search_syntax_stars,

@@ -35,7 +35,9 @@ State: **implemented**. GitHub has no Trending API, so "popular" uses `sort=star
 
 ### 2. Unified search
 
-One input, three result tabs (repositories / users / organizations). GitHub search syntax passes through unchanged (`has:release`, `language:kotlin`, `topic:compose`). 300ms debounce.
+One input, three result tabs (repositories / users / organizations). GitHub search syntax passes through unchanged (`language:kotlin`, `topic:compose`, `stars:>5000`). 300ms debounce.
+
+> There is **no** `has:release` qualifier. Measured 2026-10-07: it does not error, does not filter, and gives no hint — the result count is identical with and without it, because GitHub silently ignores it. "Only repos shipping an artifact" cannot be done in one search; it needs one `/releases` call per repo.
 
 State: **implemented**.
 

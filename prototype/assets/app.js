@@ -588,10 +588,11 @@ function renderPalette(qRaw) {
   if (!qRaw) {
     palList.innerHTML = `<div class="pal-empty" style="text-align:left;padding:18px 16px">
       <b>试试这些：</b><br>
-      <code style="font-family:var(--mono);font-size:12px">has:release</code> 有安装包的仓库 ·
+      <code style="font-family:var(--mono);font-size:12px">stars:&gt;5000</code> 高 star 仓库 ·
       <code style="font-family:var(--mono);font-size:12px">language:kotlin</code> ·
       <code style="font-family:var(--mono);font-size:12px">topic:compose</code><br>
-      结果只展示 <b>有真实可下载产物</b> 的仓库，避免点进去发现没有包。</div>`;
+      注意：GitHub 没有 <code style="font-family:var(--mono);font-size:12px">has:release</code> 这个限定符，
+      输入它不会报错也不会过滤（实测与不写结果数相同）。</div>`;
     return;
   }
 

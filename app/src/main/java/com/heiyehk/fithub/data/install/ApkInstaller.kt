@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.IntentCompat
 import com.heiyehk.fithub.R
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
@@ -225,14 +226,42 @@ object ApkInstaller {
 /**
  * 收系统安装结果的广播。
  *
- * 只关心「这次 install 结束了没有、结果是什么」：
- * [PackageInstaller.EXTRA_STATUS] 是 `STATUS_SUCCESS` 才算成功；
- * 其余的按 [PackageInstaller.EXTRA_STATUS_MESSAGE] 如实转述。
+ * ⚠️ **`STATUS_PENDING_USER_ACTION` 不是「可以忽略的中间态」，而是系统的点名。**
+ *
+ * commit 之后系统不会自己弹确认界面 —— 它把那个确认 Activity 的 Intent 通过
+ * `Intent.EXTRA_INTENT` 交给**我们**，要我们 `startActivity` 把它弹出来。
+ * 漏掉这一支的时候：会话 seal 成功、`mBridges=1`（安装器进程起来了），
+ * 但没有任何界面出现，会话永远停在 `STATUS_PENDING`，
+ * 既没有终局回调也没有 `InstallStep.Done`/`Failed`。
+ * 表现为「点了确认安装，什么都没发生」，在真机和模拟器上一样。
+ *
+ * （原注释写的是「中间态别当成失败，成功/失败由站点状态通知」—— 这句话是对的，
+ * 但结论错了：`PENDING_USER_ACTION` 不是「等一会儿就好」的中间态，
+ * 它是**轮到你干活了**，不弹就永远不会有下一步。）
  */
 class InstallResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, Int.MIN_VALUE)
         when (status) {
+            // 系统让我们弹确认界面 —— 这一支漏了，安装器就永远唤不起来
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                val confirmation = IntentCompat.getParcelableExtra(
+                    intent,
+                    Intent.EXTRA_INTENT,
+                    Intent::class.java,
+                )
+                if (confirmation != null) {
+                    // 从 BroadcastReceiver 起 Activity 必须带 NEW_TASK —— 我们没有自己的任务栈
+                    context.startActivity(confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } else {
+                    // 系统没给出确认 Intent，就没法继续了；如实说清楚，别让界面一直转
+                    ApkInstaller.complete(
+                        false,
+                        context.getString(R.string.install_error_no_confirmation),
+                    )
+                }
+            }
+
             PackageInstaller.STATUS_SUCCESS ->
                 ApkInstaller.complete(true, context.getString(R.string.install_ok))
 
@@ -244,7 +273,8 @@ class InstallResultReceiver : BroadcastReceiver() {
                         ?: context.getString(R.string.install_error_rejected),
                 )
 
-            else -> Unit // 中间态（已提交、正在下载依赖等），不发终局回调
+            // 其余（已提交、正在下载依赖等）确实不用管：等系统把终局发过来
+            else -> Unit
         }
     }
 }

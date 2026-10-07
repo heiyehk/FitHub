@@ -328,15 +328,19 @@ class GitHubApi(cacheDir: File, private val authProvider: () -> String? = { null
      * TTL 1 小时：发现页是最常打开的页面，单次也只是 1 次 search 请求，
      * 缓存久一点对配额友好，而数据本身变化不快。
      */
-    suspend fun discover(sort: DiscoverSort, query: String): ApiResult<SearchResponse> =
+    suspend fun discover(
+        sort: DiscoverSort,
+        query: String,
+        perPage: Int = DISCOVER_PER_PAGE,
+    ): ApiResult<SearchResponse> =
         get(
             "$base/search/repositories",
-            discoverCacheKey(sort, query),
+            discoverCacheKey(sort, query, perPage),
             mapOf(
                 "q" to query,
                 "sort" to sort.wire,
                 "order" to "desc",
-                "per_page" to "30",
+                "per_page" to perPage.toString(),
             ),
             maxAgeMs = HOME_TTL,
         )
@@ -358,12 +362,45 @@ class GitHubApi(cacheDir: File, private val authProvider: () -> String? = { null
         invalidatePrefix("releases-$fullName-")
     }
 
-    /** 丢弃发现页两段的缓存。key 在这里拼一次，避免两处写错 */
-    fun invalidateDiscover(query: String) {
-        invalidate(*DiscoverSort.entries.map { discoverCacheKey(it, query) }.toTypedArray())
+    /**
+ * 删掉 [days] 天前写下的缓存，返回删了几条。冷启动调一次。
+ *
+ * 判据见 [RepoCache.pruneOlderThan]：超过 7 天的文件不可能再被命中（TTL 6 小时），
+ * 留着只是**孤儿** —— 键里的查询串 / perPage 一改，旧键写下的文件就永远没人读也没人删。
+ */
+fun pruneCache(days: Long = RepoCache.PRUNE_DAYS): Int =
+    cache.pruneOlderThan(days * 24 * 60 * 60 * 1000L)
+
+/** 作废**某一个 query** 的 discover 缓存（所有 sort × 所有 perPage 变体）。
+     *
+     * 刻意**不**用 `invalidatePrefix("discover-")`：那会把订阅页四个榜的缓存一起清掉。
+     * 首页下拉刷新只该作废自己那两段，不该顺手丢掉用户还没看的榜 ——
+     * 症状是「首页刷完，订阅页下次打开四个榜全部重新联网」，白烧配额。
+     *
+     * 逐个 sort 分别按前缀删，而不是列 perPage 清单：perPage 在 key 里，
+     * 加一个取值漏掉一条的症状不是报错，是「刷新按了没反应」。
+     */
+    fun invalidateDiscoverQuery(sort: DiscoverSort, query: String) {
+        if (query.isBlank()) return
+        invalidatePrefix("discover-${sort.wire}-$query-")
     }
 
-    private fun discoverCacheKey(sort: DiscoverSort, query: String) = "discover-${sort.wire}-$query"
+    /** 作废发现页自己那两段（热门 / 最近更新） */
+    fun invalidateDiscover(query: String) {
+        DiscoverSort.entries.forEach { invalidateDiscoverQuery(it, query) }
+    }
+
+    /**
+     * perPage 必须留在键里。缓存里存的是**那次请求实际返回的条数**：
+     * 同一个 query 先用 perPage=20 取过一次，再用 50 取就会读到那 20 条，
+     * 页面上只有 20 行而且「刷新」也不动 —— 不报错。
+     * 与 [releasesCacheKey] 是同一个坑，不能省。
+     *
+     * 可见性是 internal 而不是 private：单测要直接比对两个 perPage 的键确实不同，
+     * 靠 [discover] 的返回值间接断言会漏掉「键其实没带 perPage」这一种。
+     */
+    internal fun discoverCacheKey(sort: DiscoverSort, query: String, perPage: Int) =
+        "discover-${sort.wire}-$query-$perPage"
 
     suspend fun repo(fullName: String): ApiResult<RepoDto> =
         get("$base/repos/$fullName", "repo-$fullName")
@@ -601,6 +638,9 @@ class GitHubApi(cacheDir: File, private val authProvider: () -> String? = { null
 
         /** 发现页缓存 1 小时 */
         const val HOME_TTL = 60 * 60 * 1000L
+
+        /** [discover] 不显式传 perPage 时的条数 */
+        const val DISCOVER_PER_PAGE = 30
 
         /** 「我的仓库」每页条数。100 就是接口上限，再大无效 */
         const val MY_REPOS_PER_PAGE = 100

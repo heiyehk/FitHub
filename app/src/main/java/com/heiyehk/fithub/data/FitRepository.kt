@@ -52,8 +52,28 @@ class FitRepository(val api: GitHubApi) {
      */
     val selfRepo = "heiyehk/FitHub"
 
-    /** 发现页的公共查询串：只展示有真实 release 的仓库 */
-    private val baseQuery = "has:release topic:android archived:false"
+    /**
+     * 发现页的公共查询串。
+     *
+     * 这里曾经写过 `has:release topic:android archived:false`，注释也写着
+     * 「只展示有真实 release 的仓库」。**`has:release` 不是 GitHub 仓库搜索的限定符**，
+     * 加上它与不加的结果一条不差（2026-10-07 实测，三组查询各自复现）：
+     *
+     * | 查询                              | 结果数  |
+     * |-----------------------------------|---------|
+     * | `stars:>50`                      | 822662  |
+     * | `has:release stars:>50`           | 822662  |
+     * | `topic:android stars:>50`         | 12366   |
+     * | `has:release topic:android …`     | 12366   |
+     *
+     * 榜首也是同一个仓库，所以它是被**静默忽略**的：不报 422，不过滤，也不提示。
+     * 加引号 `"has:release"` 会变成全文匹配（结果 0），说明是被当成未知限定符丢掉的。
+     *
+     * 结论：「只展示有产物的仓库」在一次 search 里做不到 —— 真要筛就得对每个仓库
+     * 再打一次 `/releases`，30 条就是 30 次请求，配额直接见底（见 class 头注释）。
+     * 所以查询串保持朴素，过滤交给详情页按需算。
+     */
+    private val baseQuery = "topic:android archived:false"
 
     suspend fun stars(): Async<List<Repo>> =
         api.discover(DiscoverSort.Stars, baseQuery).toRepos()
@@ -72,6 +92,26 @@ class FitRepository(val api: GitHubApi) {
     /** 搜索：GitHub 语法原样透传 */
     suspend fun search(query: String): Async<List<Repo>> =
         api.search(query).toRepos()
+
+    /**
+     * 订阅页的一个排行榜 tab。
+     *
+     * 走 [api.discover] 而不是 [search]：它带 1 小时 TTL 缓存，
+     * 滑走再滑回来命中缓存，不烧配额；[search] 没有这层 TTL。
+     *
+     * 查询串由 [RankBoard] 自己拼（含 created 时间窗），这里不二次加工 ——
+     * 缓存键是拿查询串原样拼的，多拼一次就必然对不上。
+     */
+    suspend fun rank(board: RankBoard): Async<List<Repo>> =
+        api.discover(board.sort, board.query(), RankBoard.LIMIT).toRepos()
+
+    /**
+     * 丢弃某一个榜的缓存。手动刷新前必须调用，否则命中未过期的 1 小时缓存，
+     * 用户下拉了却看不到任何变化。
+     *
+     * 只作废这一个榜 —— 不影响其它榜，也不影响首页那两段。
+     */
+    fun invalidateRank(board: RankBoard) = api.invalidateDiscoverQuery(board.sort, board.query())
 
     /**
      * 详情：仓库元信息 + 最近 releases。

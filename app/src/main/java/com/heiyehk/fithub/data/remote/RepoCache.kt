@@ -78,10 +78,53 @@ class RepoCache(@PublishedApi internal val dir: File, @PublishedApi internal val
         }
     }
 
+    /**
+     * 删掉 [maxAgeMs] 之前写下的条目，返回删了几条。
+     *
+     * ## 为什么需要它
+     *
+     * 缓存键里带着**会变的东西**（查询串、perPage、topic 改版），而键一旦变了，
+     * 旧键写下的文件就成了**孤儿**：永远不会被读到，也永远不会被清掉。
+     * 实测踩过的两处：
+     * - 删掉「上升」榜后，`v2-discover-stars-created___2026-09-07_stars__100…` 留在盘上
+     * - `has:release` 被证明是空操作后，`baseQuery` 变了，旧 query 的文件同样留了下来
+     *
+     * 这些文件不大（每个几 KB 到几十 KB），但它们只增不减，App 用一年目录就是垃圾场。
+     * 而**没有清理的代价比想象中大**：用户改一次配置就多一份死数据，
+     * 排查缓存问题时还得先分辨「哪些 key 还没人用了」。
+     *
+     * ## 为什么按「多久没碰过」而不是按「哪些 key」
+     *
+     * 没人知道现在到底有多少个 key 家族（搜索、发现、详情、releases…），
+     * 也没有一张能穷举的清单。按时间删只需要一个数字，且**天然覆盖未来新增的键**。
+     *
+     * TTL 6 小时 + stale-while-revalidate 意味着**任何超过几天的文件都不可能被命中**，
+     * 所以删掉它们不改变任何行为，只是回收空间。7 天给足余量。
+     */
+    fun pruneOlderThan(maxAgeMs: Long): Int {
+        val cut = System.currentTimeMillis() - maxAgeMs
+        var n = 0
+        runCatching {
+            dir.listFiles()?.forEach { f ->
+                // 三个条件缺一不可：
+                // `.json`  —— 目录里若还有别的文件，不该被这个方法顺手删掉
+                // `isFile` —— **File.delete() 对空目录也返回 true**。一个叫 `x.json`
+                //   的空目录（解压、备份、临时结构都可能造出来）会被真删掉。
+                //   判据只按后缀写时，这条完全测不出来。
+                // 够旧      —— 7 天前写下的不可能再被命中（TTL 6 小时）
+                if (f.isFile && f.name.endsWith(".json") && f.lastModified() < cut && f.delete()) n++
+            }
+        }
+        return n
+    }
+
     /** key 落到文件名时的替换规则。抽出来是因为 [removeByPrefix] 必须用同一套 */
     private fun sanitize(key: String) = key.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
     companion object {
         const val MAX_AGE = 6 * 60 * 60 * 1000L   // 6 小时
+
+        /** [pruneOlderThan] 的默认保留天数 */
+        const val PRUNE_DAYS = 7L
     }
 }

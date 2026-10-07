@@ -446,7 +446,6 @@
     <string name="search_hint_drop_syntax_alt">Drop the filter syntax, or try a different keyword</string>
     <string name="search_hireable">Open to work</string>
     <string name="search_view">View →</string>
-    <string name="search_syntax_release">Repos that ship an installable asset</string>
     <string name="search_syntax_language">Filter by language</string>
     <string name="search_syntax_topic">Filter by topic</string>
     <string name="search_syntax_stars">Filter by star count</string>
@@ -486,6 +485,27 @@
     <string name="subscribe_age_under_hour">Less than an hour ago</string>
     <string name="subscribe_age_hours">%1$d hours ago</string>
     <string name="subscribe_age_days">%1$d days ago</string>
+    <string name="rank_tab_subs">Subs</string>
+    <string name="rank_tab_skills">Skills</string>
+    <string name="rank_tab_harness">Harness</string>
+    <string name="rank_tab_agents">Agents</string>
+    <string name="rank_tab_mcp">MCP</string>
+    <string name="rank_loading">Loading this board</string>
+    <string name="rank_failed">Could not load: %1$s</string>
+    <string name="rank_retry">Retry</string>
+    <string name="rank_count">%1$d entries</string>
+    <string name="rank_cached">Data from %1$s</string>
+    <string name="rank_cost_note">One request the first time you land on this tab, then cached for an hour — pull down to force a refetch</string>
+    <string name="rank_no_release_note">Not filtered by release artifact — GitHub search has no such filter, and filtering here costs one request per repo</string>
+    <string name="rank_pushed_at">Pushed %1$s</string>
+    <string name="rank_follow">Subscribe</string>
+    <string name="rank_unfollow">Unsubscribe</string>
+    <string name="rank_empty">Nothing on this board right now</string>
+    <string name="toast_rank_refresh_failed">Refresh failed — showing what was already loaded</string>
+    <string name="rank_note_skills">Topic claude-skills · sorted by stars</string>
+    <string name="rank_note_harness">Topic agent-harness · sorted by stars</string>
+    <string name="rank_note_agents">Topic ai-agents · new in the last 90 days · sorted by stars</string>
+    <string name="rank_note_mcp">Topic mcp · new in the last 90 days · sorted by stars</string>
     <string name="webdav_title">Subscription sync</string>
     <string name="webdav_intro_1">Sync the subscription list to your own drive, so switching devices does not mean following everything again.</string>
     <string name="webdav_presets">Provider</string>
@@ -571,7 +591,7 @@
     <string name="home_section_featured">Featured</string>
     <string name="home_section_agent">Agent tools</string>
     <string name="home_section_stars_sub">GitHub has no Trending API · sorted by stars here</string>
-    <string name="home_section_updated_sub">Sorted by last push · only repos that ship a release</string>
+    <string name="home_section_updated_sub">Sorted by last push</string>
     <string name="home_section_featured_sub">Live metadata pulled from GitHub by exact full name</string>
     <string name="home_section_agent_sub">Searches GitHub for AI agent and CLI projects by topic</string>
     <string name="home_section_save">Save</string>
@@ -638,6 +658,7 @@
     <string name="install_ok">Installed</string>
     <string name="install_error_rejected">The system refused this install</string>
     <string name="install_error_installer_failed">Could not hand the package to the system installer</string>
+    <string name="install_error_no_confirmation">The system did not hand over an install confirmation screen</string>
     <string name="install_error_no_callback">The installer did not report back. Tap to try again.</string>
 
     <string name="pref_mirror">Download source</string>

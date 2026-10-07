@@ -80,6 +80,7 @@ import com.heiyehk.fithub.data.HistoryStore
 import com.heiyehk.fithub.data.ImportOutcome
 import com.heiyehk.fithub.data.MyRepos
 import com.heiyehk.fithub.data.Repo
+import com.heiyehk.fithub.data.RankBoard
 import com.heiyehk.fithub.data.Env
 import com.heiyehk.fithub.data.ScanEngine
 import com.heiyehk.fithub.data.ScanResult
@@ -417,6 +418,15 @@ fun FitHubApp() {
      * Agent 板块只是这个 map 里的一个条目（id = builtin-agent），不是特例。
      */
     var topicStates by remember { mutableStateOf<Map<String, Async<List<Repo>>>>(emptyMap()) }
+    /** 订阅页的排行榜，按 [RankBoard.id] 存。与 topicStates 同一套 Async 三态 */
+    var rankStates by remember { mutableStateOf<Map<String, Async<List<Repo>>>>(emptyMap()) }
+    /**
+     * 正在下拉刷新的榜。
+     *
+     * **故意与 [rankStates] 分开**：首次加载没数据看，要转圈；
+     * 刷新时旧榜还留在屏幕上，置成 Loading 会让整页闪成骨架屏。
+     */
+    var refreshingRanks by remember { mutableStateOf<Set<String>>(emptySet()) }
     /** 精选区：按确切全名拉取 */
     var featured by remember { mutableStateOf<Async<List<Repo>>>(Async.Loading) }
 
@@ -509,6 +519,10 @@ fun FitHubApp() {
 
     LaunchedEffect(Unit) {
         LinkEngine.load(context)
+        // 冷启动清掉 7 天前的缓存。键里的查询串 / perPage 一改，旧键就成了永远没人读
+        // 也没人删的孤儿；7 天远超 6 小时 TTL，删掉不影响任何一次命中。
+        // 放在这里而不是每次进榜：清理是全局的，跟着某个 tab 走反而会漏。
+        api.pruneCache()
         refreshScan()
     }
 
@@ -595,6 +609,72 @@ fun FitHubApp() {
             topicStates = topicStates + (section.id to r)
             rate = api.lastRemaining to api.lastLimit
         }
+    }
+
+    /**
+     * 真正发一次请求。**必须声明在调用者之前** —— 局部函数是���声明后使用。
+     *
+     * [isRefresh] 决定要不要先置成 [Async.Loading]：
+     * - 首次加载（false）：盘上没数据，非转圈不可，所以置 Loading。
+     * - 下拉刷新（true）：**不置**。旧榜还在屏幕上，置了 Loading 整页会闪成骨架屏，
+     *   而用户下拉恰恰说明他想继续看这份数据。理由与 [refreshDiscover] 相同，
+     *   它也是「期间不把状态置成 Loading」。
+     */
+    fun fetchRank(board: RankBoard, isRefresh: Boolean) {
+        if (isRefresh) {
+            if (board.id in refreshingRanks) return
+            refreshingRanks = refreshingRanks + board.id
+        } else {
+            rankStates = rankStates + (board.id to Async.Loading)
+        }
+        scope.launch {
+            try {
+                val next = repo.rank(board)
+                // 下拉刷新失败**不覆盖**已有的数据。
+                //
+                // 用户可能 3 秒前还在看这 30 条，一次网络抖动不该让整页变成错误页 ——
+                // 而这里连兜底都没有：上面 [refreshRank] 已经把磁盘缓存删了，
+                // 所以 GitHubApi 的 stale-while-revalidate（过期数据也先返回）也救不了。
+                // 保留旧数据 + 一句提示，是这里唯一说得通的处理。
+                if (isRefresh && next is Async.Err) {
+                    toast(context.getString(R.string.toast_rank_refresh_failed), next.message)
+                } else {
+                    rankStates = rankStates + (board.id to next)
+                }
+                rate = api.lastRemaining to api.lastLimit
+            } finally {
+                // 刷新失败也要摘掉标记，否则下拉指示器永远转下去、且再也拉不动第二次
+                if (isRefresh) refreshingRanks = refreshingRanks - board.id
+            }
+        }
+    }
+
+    /**
+     * 停在某个榜上时拉一次，key = [RankBoard.id]。
+     *
+     * **只对「从没加载过」的榜发请求。** Err 也直接返回：触发条件是滑动，
+     * 用户来回滑两下就会连着打好几次请求；而失败往往正是配额或网络出问题的时候，
+     * 那时自动重试最没用也最烧配额（未登录 search 只有 10 次/分钟）。
+     * 要重来请下拉刷新，或按错误页里的「重试」。
+     */
+    fun loadRank(board: RankBoard) {
+        if (rankStates[board.id] != null) return
+        fetchRank(board, isRefresh = false)
+    }
+
+    /** 用户在错误页点了「重试」，无条件重来一次。盘上没数据，转圈是对的 */
+    fun retryRank(board: RankBoard) = fetchRank(board, isRefresh = false)
+
+    /**
+     * 下拉刷新一个榜。
+     *
+     * **必须先作废缓存** —— [loadRank] 只认「没加载过」，不清缓存的话下拉会
+     * 安静地什么也不做（和 `refreshDiscover`、订阅刷新踩的是同一个坑）。
+     * 只作废这一个榜，其它榜和首页那两段不受影响。
+     */
+    fun refreshRank(board: RankBoard) {
+        repo.invalidateRank(board)
+        fetchRank(board, isRefresh = true)
     }
 
     /**
@@ -770,31 +850,51 @@ fun FitHubApp() {
      * 刷新一条关注的元信息。串行调用，避免并发撞限流。
      *
      * 拉失败不动本地快照 —— 用空值覆盖会让用户丢掉已存的描述和 star 数。
+     *
+     * ⚠️ 这里**必须**写 [refreshingSubs]��原来只有 [refreshAllSubscriptions] 会写它，
+     * 于是行内的那个转圈只在「全部刷新」时才可能亮 —— 单条刷新点下去界面纹丝不动，
+     * 看起来像按钮坏了。真机实测确认过：点完 500ms 截图与点之前完全一致。
+     *
+     * 用 try/finally 收尾：请求抛异常时不能把这一项永远留在「刷新中」，
+     * 那会让用户再也点不动它，而且没有任何东西告诉他为什么。
      */
     fun refreshSubscription(fullName: String, onDone: (Boolean) -> Unit = {}) {
+        // 已在刷就别再发一次，未登录配额 60/h 经不起连点
+        if (fullName in refreshingSubs) return
+        refreshingSubs = refreshingSubs + fullName
+        // 手动刷新必须先作废缓存。api.repo / api.releases 都会先读磁盘缓存，
+        // 缓存没过期就直接返回 —— 那「刷新」读的还是同一份数据，
+        // 真机实测表现为：按下去 90ms 就提示「成功」，转圈根本没机会出现。
+        // 与 [refreshDiscover] 里的 invalidateDiscover 是同一个理由。
+        api.invalidateRepo(fullName)
         scope.launch {
-            val ok = when (val d = repo.detail(fullName)) {
-                is Async.Ok -> {
-                    SubscriptionStore.refreshMeta(context, fullName) { it.copy(
-                        name = d.value.name,
-                        owner = d.value.owner,
-                        desc = d.value.desc,
-                        stars = d.value.stars,
-                        lang = d.value.lang,
-                        topics = d.value.topics,
-                        lastPush = d.value.date,
-                        latestTag = d.value.version.takeIf { it != "—" }.orEmpty(),
-                        latestReleaseDate = if (d.value.hasRealRelease) d.value.date else "",
-                    ) }
-                    true
+            var ok = false
+            try {
+                ok = when (val d = repo.detail(fullName)) {
+                    is Async.Ok -> {
+                        SubscriptionStore.refreshMeta(context, fullName) { it.copy(
+                            name = d.value.name,
+                            owner = d.value.owner,
+                            desc = d.value.desc,
+                            stars = d.value.stars,
+                            lang = d.value.lang,
+                            topics = d.value.topics,
+                            lastPush = d.value.date,
+                            latestTag = d.value.version.takeIf { it != "—" }.orEmpty(),
+                            latestReleaseDate = if (d.value.hasRealRelease) d.value.date else "",
+                        ) }
+                        true
+                    }
+                    is Async.Err -> {
+                        toast(context.getString(R.string.toast_subs_refresh_failed, fullName), d.message)
+                        false
+                    }
+                    Async.Loading -> false
                 }
-                is Async.Err -> {
-                    toast(context.getString(R.string.toast_subs_refresh_failed, fullName), d.message)
-                    false
-                }
-                Async.Loading -> false
+                if (ok) subscriptions = SubscriptionStore.all(context)
+            } finally {
+                refreshingSubs = refreshingSubs - fullName
             }
-            if (ok) subscriptions = SubscriptionStore.all(context)
             onDone(ok)
         }
     }
@@ -813,6 +913,9 @@ fun FitHubApp() {
             var ok = 0
             var failed = 0
             for (full in targets) {
+                // 同 [refreshSubscription]：先作废缓存，否则「全部刷新」只是把磁盘上
+                // 那份再读一遍。用户按了刷新却什么都没变，还提示「成功 N 条」。
+                api.invalidateRepo(full)
                 when (val d = repo.detail(full)) {
                     is Async.Ok -> {
                         SubscriptionStore.refreshMeta(context, full) { it.copy(
@@ -1301,10 +1404,17 @@ fun FitHubApp() {
 
                 AppTab.Subscribe -> SubscribeScreen(
                     subs = subscriptions,
+                    ranks = rankStates,
+                    onRankLoad = { loadRank(it) },
+                    onRankRetry = { retryRank(it) },
+                    onRankRefresh = { refreshRank(it) },
+                    refreshingRanks = refreshingRanks,
                     onRepoTap = { open(it) },
                     onBrowse = { tab = AppTab.Discover },
                     onRefreshOne = { refreshSubscription(it) },
                     onRefreshAll = { refreshAllSubscriptions() },
+                    onToggleFollow = { toggleFollow(it) },
+                    isFollowing = { isFollowing(it) },
                     refreshing = refreshingSubs,
                     listState = subscribeState,
                 )

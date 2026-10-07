@@ -82,7 +82,9 @@ data class HomeSection(
             HomeSection(
                 id = ID_UPDATED,
                 title = "最近更新",
-                subtitle = "按最近 push 时间排序 · 只含有 release 的仓库",
+                // 不写「只含有 release 的仓库」：search 没有 has:release 限定符，
+                // 那句话是假的（实测见 FitRepository.baseQuery 的注释）
+                subtitle = "按最近 push 时间排序",
                 builtin = true,
             ),
             HomeSection(
