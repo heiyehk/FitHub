@@ -24,7 +24,9 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object ApkInstaller {
 
-    private const val TAG = "FitHubInstall"
+    // internal 而不是 private：[InstallResultReceiver] 要用同一个 tag，
+    // 复制一份字面量进去的话，改名时只会改掉一处，logcat 里就再也 grep 不到了。
+    internal const val TAG = "FitHubInstall"
 
     /** 用户没给「安装未知来源应用」授权，或被系统收回 */
     const val NEEDS_PERMISSION = "needs-permission"
@@ -160,7 +162,11 @@ object ApkInstaller {
 
     /** 由 [InstallResultReceiver] 调用。放在这里而不是 receiver 里，方便单测直接驱动。 */
     internal fun complete(ok: Boolean, message: String) {
-        pending.getAndSet(null)?.invoke(ok, message)
+        val cb = pending.getAndSet(null)
+        // 结果**丢了**和结果正常同样需要留下痕迹：没有这条的话，
+        // 「点了更新什么反应都没有」只能靠猜（pending 是进程级的，被清空时界面不会知道）。
+        Log.i(TAG, "安装结果 ok=$ok message=$message callback=${if (cb != null) "有" else "无"}")
+        cb?.invoke(ok, message)
     }
 
     /**
@@ -242,6 +248,7 @@ object ApkInstaller {
 class InstallResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, Int.MIN_VALUE)
+        Log.i(ApkInstaller.TAG, "收到安装结果广播 status=$status session=${intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)}")
         when (status) {
             // 系统让我们弹确认界面 —— 这一支漏了，安装器就永远唤不起来
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
@@ -265,16 +272,65 @@ class InstallResultReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_SUCCESS ->
                 ApkInstaller.complete(true, context.getString(R.string.install_ok))
 
-            PackageInstaller.STATUS_FAILURE ->
-                ApkInstaller.complete(
-                    false,
-                    // 系统给的状态说明是原文，转述不翻译
-                    intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
-                        ?: context.getString(R.string.install_error_rejected),
-                )
-
-            // 其余（已提交、正在下载依赖等）确实不用管：等系统把终局发过来
-            else -> Unit
+            // ## 这里的 `else` 不是「无关状态」，而是**七种失败**
+            //
+            // `STATUS_FAILURE`(=1) 只是失败码里的一个。实测（模拟器 API 36，
+            // debug 包装 release 包）：
+            //
+            // ```
+            // 收到安装结果广播 status=-1 session=866486947   ← PENDING_USER_ACTION，弹了确认框
+            // 收到安装结果广播 status=5  session=866486947   ← FAILURE_CONFLICT，签名冲突
+            // ```
+            //
+            // 原来的 `when` 只列了 `STATUS_FAILURE`，于是 status=5 落进 `else -> Unit`，
+            // `complete()` 根本没被调用：**安装失败，界面一声不吭**。用户看到的是
+            // 「按了更新、确认框关了、然后什么都没发生」。
+            //
+            // 平台一共有八个失败码（javap -constants 实测 android-36）：
+            //
+            // | 常量 | 值 |
+            // |---|---|
+            // | STATUS_FAILURE | 1 |
+            // | STATUS_FAILURE_BLOCKED | 2 |
+            // | STATUS_FAILURE_ABORTED | 3 |
+            // | STATUS_FAILURE_INVALID | 4 |
+            // | STATUS_FAILURE_CONFLICT | 5 |
+            // | STATUS_FAILURE_STORAGE | 6 |
+            // | STATUS_FAILURE_INCOMPATIBLE | 7 |
+            // | STATUS_FAILURE_TIMEOUT | 8 |
+            //
+            // 签名冲突、空间不足、被策略拦截——都是用户**可以据此行动**的真实原因，
+            // 全部按成功处理或全部静默丢弃都是错的。所以这里不再枚举：
+            // 除 PENDING_USER_ACTION 和 SUCCESS 之外，一律当作失败。
+            else -> ApkInstaller.complete(false, messageFor(context, status, intent))
         }
+    }
+
+    /**
+     * 失败原因怎么说。
+     *
+     * 两个常见的失败有自己的说法，因为它们的原文（框架英文）对用户没有行动价值：
+     * 签名冲突要「先卸载旧版」，空间不足要「清点空间」。
+     *
+     * 其余一律用系统给的那句原文 —— 那是权威原因，本项目不替它编一个更友好的说法。
+     * 都没有才落到兜底。
+     */
+    private fun messageFor(context: Context, status: Int, intent: Intent): String {
+        val localized = when (status) {
+            PackageInstaller.STATUS_FAILURE_CONFLICT,
+            PackageInstaller.STATUS_FAILURE_INCOMPATIBLE,
+            -> context.getString(R.string.install_error_signature_conflict)
+
+            PackageInstaller.STATUS_FAILURE_STORAGE ->
+                context.getString(R.string.install_error_storage)
+
+            PackageInstaller.STATUS_FAILURE_BLOCKED ->
+                context.getString(R.string.install_error_blocked)
+
+            else -> null
+        }
+        if (localized != null) return localized
+        return intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+            ?: context.getString(R.string.install_error_rejected)
     }
 }
