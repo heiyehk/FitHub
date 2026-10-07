@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.MutableState
@@ -312,6 +313,16 @@ fun DetailPanel(
     }
     val installStep = install.value
 
+    /** 下载全局状态**。
+     *
+     * **必须 collect 成值再用，不能把 StateFlow 对象本身传进 LaunchedEffect 的 key。**
+     * `DownloadCenter.state` 是 `_state.asStateFlow()` 返回的那个对象，身份永远不变；
+     * `LaunchedEffect` 只在 key 变化时重跑，于是拿它当 key 等于「只跑一次」。
+     * 而这里恰恰是最需要它跟着变的地方 —— 上面这个同步的第一版就是这么写的，
+     * 结果它一次都没在下载过程中触发过，按钮当然纹丝不动。
+     */
+    val downloadState by DownloadCenter.state.collectAsState()
+
     /**
      * 把**全局**下载状态接进 [install]。
      *
@@ -323,10 +334,10 @@ fun DetailPanel(
      * 只在 [install] 是 Idle 时同步：主按钮自己发起的下载已经写好了状态，
      * 再覆盖会把它自己的进度冲掉。Idle 时它是权威、全局是补充。
      */
-    LaunchedEffect(installStep, DownloadCenter.state) {
+    LaunchedEffect(installStep, downloadState) {
         if (installStep !is InstallStep.Idle) return@LaunchedEffect
         val assetName = repo.best?.name ?: return@LaunchedEffect
-        val live = DownloadCenter.state.value
+        val live = downloadState
         val stillLive = when (live) {
             is DownloadCenter.Progress.Running -> live.assetName == assetName
             is DownloadCenter.Progress.Paused -> live.assetName == assetName

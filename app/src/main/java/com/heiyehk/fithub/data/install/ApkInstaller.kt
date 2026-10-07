@@ -169,6 +169,37 @@ object ApkInstaller {
         runCatching { context.packageManager.getLaunchIntentForPackage(packageName) }
             .getOrNull()
             ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /**
+     * 设备上已装的那个包的 versionCode。没装 / 拿不到返回 0。
+     *
+     * [isInstalled] 回答的是「装没装」，而按钮真正要回答的是
+     * 「**现在这个文件是装它，还是打开已经装的那个**」—— 后者要看版本。
+     */
+    fun installedVersionCode(context: Context, packageName: String): Long {
+        if (packageName.isBlank()) return 0L
+        return runCatching {
+            val info = context.packageManager.getPackageInfo(packageName, 0)
+            @Suppress("DEPRECATION")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
+        }.getOrDefault(0L)
+    }
+
+    /**
+     * 这个下载好的文件是不是**已装应用的更新**。
+     *
+     * 少这一条判断时，任何已安装应用的升级都会卡死：旧版正装着，
+     * [isInstalled] 必然为 true，于是界面给出的是「打开」——
+     * 点开是旧版，新下好的那个永远装不上。
+     * 本项目自己的自更新就是第一个撞上这个的。
+     *
+     * 读不到已装版本时（0）**不**判成更新：宁可给「打开」——
+     * 把一次已经装好的应用再装一遍，对用户是更糟的结果。
+     */
+    fun isUpdateOfInstalled(context: Context, entry: DownloadedApk): Boolean {
+        val installed = installedVersionCode(context, entry.packageName)
+        return installed > 0L && entry.versionCode > installed
+    }
 }
 
 /**

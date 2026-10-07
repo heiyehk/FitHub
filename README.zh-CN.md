@@ -23,7 +23,7 @@
 
 ## 状态
 
-早期开发中，功能尚不完整。版本 `0.0.8`，以下描述与该版本一致：
+早期开发中，功能尚不完整。版本 `0.0.9`，以下描述与该版本一致：
 
 | 范围 | 状态 |
 |---|---|
@@ -49,7 +49,7 @@
 | 分享 | 已实现 —— 系统分享面板，带仓库、本机适配结论和 Release 链接。是文字，不是图片卡片 |
 | 偏好设置 | 已实现 —— 外观（跟随系统/浅色/深色）、是否包含预发布版本、安装前是否强制校验 SHA-256 |
 
-每个 release 都会附上 APK。取 [`FitHub-v0.0.8-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.8) —— 已签名、R8 压缩、含全部四种 ABI。想看 logcat 就用 `-debug` 那个。
+每个 release 都会附上 APK。取 [`FitHub-v0.0.9-release.apk`](https://github.com/heiyehk/FitHub/releases/tag/v0.0.9) —— 已签名、R8 压缩、含全部四种 ABI。想看 logcat 就用 `-debug` 那个。
 
 ## 功能
 

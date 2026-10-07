@@ -234,6 +234,10 @@ fun actionFor(context: Context, entry: DownloadedApk?): ApkAction = when {
     entry == null -> ApkAction.DOWNLOAD
     // 读不出包名 = 它不是个能装的 APK（或者是坏包）。不是「还没装」，是「装不了」
     entry.packageName.isBlank() -> ApkAction.NONE
+    // 已装应用的更新必须给「安装」，不能给「打开」：旧版正装着，isInstalled
+    // 必然为 true，于是界面上唯一能点的就是「打开」，点开还是旧版，新下的那个
+    // 永远装不上。本项目自己的自更新就是第一个撞上这个的。
+    ApkInstaller.isUpdateOfInstalled(context, entry) -> ApkAction.INSTALL
     ApkInstaller.isInstalled(context, entry.packageName) -> ApkAction.OPEN
     else -> ApkAction.INSTALL
 }
